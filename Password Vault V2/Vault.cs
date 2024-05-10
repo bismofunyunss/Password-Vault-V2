@@ -1,93 +1,32 @@
-﻿using System.Text.RegularExpressions;
+﻿using System.Runtime.InteropServices;
+using System.Security.Cryptography;
+using System.Text.RegularExpressions;
 
 namespace Password_Vault_V2;
 
 public partial class Vault : UserControl
 {
+    private static CancellationTokenSource _tokenSource = new();
+    private static CancellationToken Token => _tokenSource.Token;
+
     public Vault()
     {
         InitializeComponent();
     }
 
-    /// <summary>
-    ///     Represents static fields and constants used for file processing and UI interactions.
-    /// </summary>
-    public static class FileProcessingConstants
-    {
-        public const int MaximumFileSize = 1_000_000_000;
-        public static char[] PasswordArray = [];
-        public static string LoadedFile = string.Empty;
-        public static string LoadedFileToHash = string.Empty;
-        public static string Result = string.Empty;
-        public static bool IsAnimating { get; set; }
-        public static bool FileOpened { get; set; }
-        public static long FileSize { get; set; }
-
-        public static readonly ToolTip Tooltip = new();
-    }
-
     private void EnableUi()
     {
-        foreach (Control c in this.Controls)
-            c.Enabled = true;
+        UiController.LogicMethods.EnableUi(AddRowBtn, DeleteRowBtn, SaveVaultBtn);
     }
 
     private void DisableUi()
     {
-        foreach (Control c in this.Controls)
-            c.Enabled = false;
+        UiController.LogicMethods.DisableUi(AddRowBtn, DeleteRowBtn, SaveVaultBtn);
     }
 
-    /// <summary>
-    /// Initiates the animation for encryption.
-    /// </summary>
-    private async void StartAnimationEncryption()
+    private async void StartAnimation()
     {
-        FileProcessingConstants.IsAnimating = true;
-        await AnimateLabelEncrypt();
-    }
-
-    /// <summary>
-    /// Initiates the animation for decryption.
-    /// </summary>
-    private async void StartAnimationDecryption()
-    {
-        FileProcessingConstants.IsAnimating = true;
-        await AnimateLabelDecrypt();
-    }
-
-    /// <summary>
-    /// Asynchronously animates the label to indicate file encryption progress.
-    /// </summary>
-    /// <returns>A task representing the asynchronous operation.</returns>
-    private async Task AnimateLabelEncrypt()
-    {
-        while (FileProcessingConstants.IsAnimating)
-        {
-            outputLbl.Text = @"Encrypting file";
-            for (var i = 0; i < 4; i++)
-            {
-                outputLbl.Text += @".";
-                await Task.Delay(400);
-            }
-        }
-    }
-
-    /// <summary>
-    /// Asynchronously animates the label to indicate file decryption progress.
-    /// </summary>
-    /// <returns>A task representing the asynchronous operation.</returns>
-    private async Task AnimateLabelDecrypt()
-    {
-        while (FileProcessingConstants.IsAnimating)
-        {
-            outputLbl.Text = @"Decrypting file";
-            for (var i = 0; i < 4; i++)
-            {
-                outputLbl.Text += @".";
-                await Task.Delay(400);
-            }
-        }
+        await UiController.Animations.AnimateLabel(outputLbl, "Saving vault", Token);
     }
 
     /// <summary>
@@ -116,19 +55,19 @@ public partial class Vault : UserControl
 
                     var rowIndex = PassVault.Rows.Add();
 
-                    if (values != null)
-                        for (var i = 0; i < values.Length; i++)
-                            PassVault.Rows[rowIndex].Cells[i].Value = values[i];
+                    if (values == null)
+                        continue;
+                    for (var i = 0; i < values.Length; i++)
+                        PassVault.Rows[rowIndex].Cells[i].Value = values[i];
                 }
             }
             else
             {
-                MessageBox.Show("Vault file does not exist.", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                throw new Exception("Vault file does not exist.");
             }
         }
         catch (Exception ex)
         {
-            Crypto.CryptoUtilities.ClearMemory(FileProcessingConstants.PasswordArray);
             MessageBox.Show(ex.Message, "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
             ErrorLogging.ErrorLog(ex);
         }
@@ -144,15 +83,45 @@ public partial class Vault : UserControl
 
     private void AddRowBtn_Click(object sender, EventArgs e)
     {
+        try
+        {
+            if (Authentication.CurrentLoggedInUser == string.Empty)
+                MessageBox.Show("No user is currently logged in.", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+
+            PassVault.Rows.Add();
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(ex.Message, "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            ErrorLogging.ErrorLog(ex);
+        }
     }
 
     private void DeleteRowBtn_Click(object sender, EventArgs e)
     {
+        try
+        {
+            if (Authentication.CurrentLoggedInUser == string.Empty)
+                MessageBox.Show("No user is currently logged in.", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
 
+            if (PassVault.SelectedRows.Count <= 0)
+                return;
+            var selectedRow = PassVault.SelectedRows[0].Index;
+
+            PassVault.Rows.RemoveAt(selectedRow);
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(ex.Message, "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            ErrorLogging.ErrorLog(ex);
+        }
     }
 
     private async void SaveVaultBtn_Click(object sender, EventArgs e)
     {
+        byte[] decryptedPassword = [];
+        var handle = GCHandle.Alloc(decryptedPassword, GCHandleType.Pinned);
+
         try
         {
             MessageBox.Show(
@@ -160,6 +129,13 @@ public partial class Vault : UserControl
                 "Info",
                 MessageBoxButtons.OK, MessageBoxIcon.Exclamation);
 
+            if (Authentication.CurrentLoggedInUser == string.Empty)
+                throw new Exception("No user is currently logged in.");
+
+            if (_tokenSource.IsCancellationRequested)
+                _tokenSource = new CancellationTokenSource();
+
+            StartAnimation();
             DisableUi();
 
             var filePath = Path.Combine("Password Vault", "Users",
@@ -183,21 +159,30 @@ public partial class Vault : UserControl
                 }
             }
 
+            decryptedPassword = ProtectedData.Unprotect(Crypto.CryptoConstants.SecurePassword,
+                Crypto.CryptoConstants.SecurePasswordSalt, DataProtectionScope.CurrentUser);
+
             var encryptedVault = await Crypto.EncryptFile(Authentication.CurrentLoggedInUser,
-                Crypto.CryptoConstants.SecurePassword,
+                decryptedPassword,
                 Authentication.GetUserVault(Authentication.CurrentLoggedInUser));
 
+            var encryptedPassword = ProtectedData.Protect(decryptedPassword, Crypto.CryptoConstants.SecurePasswordSalt,
+                DataProtectionScope.CurrentUser);
+
+            Crypto.CryptoConstants.SecurePassword = encryptedPassword;
+
             if (encryptedVault == Array.Empty<byte>())
-                throw new ArgumentException("Value was empty.", nameof(encryptedVault));
+            {
+                Crypto.CryptoUtilities.ClearMemory(decryptedPassword);
+                throw new Exception("There was an error while trying to save.");
+            }
 
             var encryptedVaultString = DataConversionHelpers.ByteArrayToBase64String(encryptedVault);
             await File.WriteAllTextAsync(Authentication.GetUserVault(Authentication.CurrentLoggedInUser),
                 encryptedVaultString);
 
-
             GC.Collect(GC.MaxGeneration, GCCollectionMode.Aggressive, true, true);
 
-            FileProcessingConstants.IsAnimating = false;
             outputLbl.Text = "Vault saved successfully";
             outputLbl.ForeColor = Color.LimeGreen;
             MessageBox.Show("Vault saved successfully.", "Save vault", MessageBoxButtons.OK,
@@ -209,13 +194,29 @@ public partial class Vault : UserControl
         }
         catch (Exception ex)
         {
-            EnableUi();
-            FileProcessingConstants.IsAnimating = false;
-            Crypto.CryptoUtilities.ClearMemory(FileProcessingConstants.PasswordArray);
+            Crypto.CryptoUtilities.ClearMemory(decryptedPassword);
+            if (_tokenSource.IsCancellationRequested)
+                _tokenSource = new CancellationTokenSource();
 
+            await _tokenSource.CancelAsync();
+
+            EnableUi();
             MessageBox.Show(ex.Message, "Error", MessageBoxButtons.OK,
                 MessageBoxIcon.Error);
+
+            outputLbl.Text = "Idle...";
+            outputLbl.ForeColor = Color.White;
             ErrorLogging.ErrorLog(ex);
+        }
+        finally
+        {
+            if (_tokenSource.IsCancellationRequested)
+                _tokenSource = new CancellationTokenSource();
+
+            await _tokenSource.CancelAsync();
+
+            Crypto.CryptoUtilities.ClearMemory(decryptedPassword);
+            handle.Free();
         }
     }
 }

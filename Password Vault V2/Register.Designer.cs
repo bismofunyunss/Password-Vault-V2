@@ -58,7 +58,7 @@
             // 
             userTxt.BackColor = Color.FromArgb(30, 30, 30);
             userTxt.Font = new Font("Century Gothic", 11F, FontStyle.Regular, GraphicsUnit.Point, 0);
-            userTxt.ForeColor = Color.Gold;
+            userTxt.ForeColor = Color.White;
             userTxt.Location = new Point(6, 54);
             userTxt.Name = "userTxt";
             userTxt.Size = new Size(438, 34);
@@ -78,11 +78,11 @@
             // 
             passTxt.BackColor = Color.FromArgb(30, 30, 30);
             passTxt.Font = new Font("Century Gothic", 11F, FontStyle.Regular, GraphicsUnit.Point, 0);
-            passTxt.ForeColor = Color.Gold;
+            passTxt.ForeColor = Color.White;
             passTxt.Location = new Point(6, 115);
             passTxt.Name = "passTxt";
             passTxt.Size = new Size(438, 34);
-            passTxt.TabIndex = 3;
+            passTxt.TabIndex = 2;
             passTxt.UseSystemPasswordChar = true;
             // 
             // confirmPassLbl
@@ -99,11 +99,11 @@
             // 
             confirmPassTxt.BackColor = Color.FromArgb(30, 30, 30);
             confirmPassTxt.Font = new Font("Century Gothic", 11F, FontStyle.Regular, GraphicsUnit.Point, 0);
-            confirmPassTxt.ForeColor = Color.Gold;
+            confirmPassTxt.ForeColor = Color.White;
             confirmPassTxt.Location = new Point(6, 180);
             confirmPassTxt.Name = "confirmPassTxt";
             confirmPassTxt.Size = new Size(438, 34);
-            confirmPassTxt.TabIndex = 5;
+            confirmPassTxt.TabIndex = 3;
             confirmPassTxt.UseSystemPasswordChar = true;
             // 
             // CreateAccountBtn
@@ -118,7 +118,7 @@
             CreateAccountBtn.Location = new Point(6, 220);
             CreateAccountBtn.Name = "CreateAccountBtn";
             CreateAccountBtn.Size = new Size(438, 44);
-            CreateAccountBtn.TabIndex = 6;
+            CreateAccountBtn.TabIndex = 4;
             CreateAccountBtn.Text = "&Create Account";
             CreateAccountBtn.UseVisualStyleBackColor = false;
             CreateAccountBtn.Click += CreateAccountBtn_Click;
@@ -137,7 +137,7 @@
             // 
             outputLbl.AutoSize = true;
             outputLbl.Font = new Font("Century Gothic", 11F);
-            outputLbl.Location = new Point(90, 397);
+            outputLbl.Location = new Point(104, 397);
             outputLbl.Name = "outputLbl";
             outputLbl.Size = new Size(71, 25);
             outputLbl.TabIndex = 9;
@@ -150,7 +150,7 @@
             ShowPasswordCheckBox.Location = new Point(234, 281);
             ShowPasswordCheckBox.Name = "ShowPasswordCheckBox";
             ShowPasswordCheckBox.Size = new Size(204, 29);
-            ShowPasswordCheckBox.TabIndex = 11;
+            ShowPasswordCheckBox.TabIndex = 5;
             ShowPasswordCheckBox.Text = "Show Password";
             ShowPasswordCheckBox.UseVisualStyleBackColor = true;
             ShowPasswordCheckBox.CheckedChanged += ShowPasswordCheckBox_CheckedChanged;
@@ -197,23 +197,24 @@
             Controls.Add(RegisterBox);
             Name = "Register";
             Size = new Size(474, 458);
+            Load += Register_Load;
             RegisterBox.ResumeLayout(false);
             RegisterBox.PerformLayout();
             ResumeLayout(false);
         }
 
         private Label userLbl;
-        private TextBox userTxt;
+        public TextBox userTxt;
         private Label passLbl;
         private TextBox passTxt;
         private Label confirmPassLbl;
         private TextBox confirmPassTxt;
-        private Button CreateAccountBtn;
         private Label statusLbl;
         private Label outputLbl;
         private CheckBox ShowPasswordCheckBox;
         private GroupBox RegisterBox;
         public Label WelcomeLabel;
+        public Button CreateAccountBtn;
     }
 
     #endregion

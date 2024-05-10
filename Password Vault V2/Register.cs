@@ -6,12 +6,13 @@ namespace Password_Vault_V2;
 
 public partial class Register : UserControl
 {
+    private static CancellationTokenSource _cancellationTokenSource = new();
+    private static readonly CancellationToken CancellationToken = _cancellationTokenSource.Token;
+
     public Register()
     {
         InitializeComponent();
     }
-
-    private static bool _isAnimating;
 
     public static bool CheckPasswordValidity(IReadOnlyCollection<char> password, IReadOnlyCollection<char>? password2 = null)
     {
@@ -44,10 +45,6 @@ public partial class Register : UserControl
 
         var pinnedConfirmPassword = GCHandle.Alloc(confirmPasswordBytes, GCHandleType.Pinned);
 
-        var size = passwordBytes.Length;
-
-        var finalSize = size * sizeof(byte);
-
         var userExists = Authentication.UserExists(userName);
 
         try
@@ -64,9 +61,19 @@ public partial class Register : UserControl
                 throw new ArgumentException("Username already exists.", nameof(userName));
             }
         }
+        catch (Exception)
+        {
+            if (_cancellationTokenSource.IsCancellationRequested)
+                _cancellationTokenSource = new CancellationTokenSource();
+
+            await _cancellationTokenSource.CancelAsync();
+            outputLbl.Text = "Idle...";
+            outputLbl.ForeColor = Color.White;
+            throw;
+        }
         finally
         {
-            Crypto.CryptoUtilities.ClearMemory(finalSize, pinnedPassword.AddrOfPinnedObject(), finalSize, pinnedConfirmPassword.AddrOfPinnedObject());
+            Crypto.CryptoUtilities.ClearMemory(passwordBytes, confirmPasswordBytes);
             pinnedPassword.Free();
             pinnedConfirmPassword.Free();
         }
@@ -98,6 +105,9 @@ public partial class Register : UserControl
     private async Task RegisterAsync(string username, byte[] password, byte[] confirmPassword)
     {
         Process.GetCurrentProcess().PriorityClass = ProcessPriorityClass.Normal;
+
+        if (_cancellationTokenSource.IsCancellationRequested)
+            _cancellationTokenSource = new CancellationTokenSource();
 
         StartAnimation();
 
@@ -140,19 +150,26 @@ public partial class Register : UserControl
 
         outputLbl.Text = "Account created";
         outputLbl.ForeColor = Color.LimeGreen;
-        _isAnimating = false;
+
+        if (_cancellationTokenSource.IsCancellationRequested)
+            _cancellationTokenSource = new CancellationTokenSource();
+
+        await _cancellationTokenSource.CancelAsync();
 
         MessageBox.Show("Registration successful! Make sure you do NOT forget your password or you will lose access " +
                         "to all of your files.", "Registration Complete", MessageBoxButtons.OK,
             MessageBoxIcon.Information);
 
         EnableUi();
-        userTxt.Clear();
+
+        outputLbl.Text = "Idle...";
+        outputLbl.ForeColor = Color.White;
+
         Crypto.CryptoUtilities.ClearMemory(passTxt.Text, confirmPassTxt.Text);
+        userTxt.Clear();
         passTxt.Clear();
         confirmPassTxt.Clear();
-        Crypto.CryptoUtilities.ClearMemory(password);
-        Crypto.CryptoUtilities.ClearMemory(confirmPassword);
+        Crypto.CryptoUtilities.ClearMemory(password, confirmPassword);
 
         GC.Collect(GC.MaxGeneration, GCCollectionMode.Aggressive, true, true);
     }
@@ -191,7 +208,6 @@ public partial class Register : UserControl
                 " 6.) Both passwords must match.");
     }
 
-
     private static string CreateDirectoryIfNotExists(string directoryPath)
     {
         var fullPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
@@ -214,40 +230,23 @@ public partial class Register : UserControl
         catch (Exception ex)
         {
             EnableUi();
-
-            outputLbl.ForeColor = Color.WhiteSmoke;
-            _isAnimating = false;
             ErrorLogging.ErrorLog(ex);
-
             MessageBox.Show(ex.Message, "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
-
-            outputLbl.Text = "Idle...";
         }
     }
 
     private async void StartAnimation()
     {
-        _isAnimating = true;
-        await AnimateLabel();
-    }
-
-    private async Task AnimateLabel()
-    {
-        while (_isAnimating)
-        {
-            outputLbl.Text = @"Creating account";
-
-            for (var i = 0; i < 4; i++)
-            {
-                outputLbl.Text += @".";
-                await Task.Delay(400);
-            }
-        }
+        await UiController.Animations.AnimateLabel(outputLbl, "Creating account", CancellationToken);
     }
 
     private void ShowPasswordCheckBox_CheckedChanged(object sender, EventArgs e)
     {
         passTxt.UseSystemPasswordChar = !ShowPasswordCheckBox.Checked;
         confirmPassTxt.UseSystemPasswordChar = !ShowPasswordCheckBox.Checked;
+    }
+
+    private void Register_Load(object sender, EventArgs e)
+    {
     }
 }

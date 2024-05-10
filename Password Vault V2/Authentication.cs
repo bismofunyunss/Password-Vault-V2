@@ -50,11 +50,11 @@ public static class Authentication
     /// <summary>
     ///     Asynchronously retrieves user information from a file and updates CryptoConstants.Hash.
     /// </summary>
-    /// <param name="userName">The user name for which information is retrieved.</param>
+    /// <param name="userName">The username for which information is retrieved.</param>
     /// <returns>A <see cref="Task" /> representing the asynchronous operation.</returns>
-    /// <exception cref="IOException">Thrown if the file specified by the user name does not exist.</exception>
+    /// <exception cref="IOException">Thrown if the file specified by the username does not exist.</exception>
     /// <remarks>
-    ///     This method constructs a file path using the provided user name and reads information
+    ///     This method constructs a file path using the provided user ame and reads information
     ///     from the file. It searches for the line containing "User:" and converts the hexadecimal
     ///     string from the subsequent line to a byte array, updating CryptoConstants.Hash.
     ///     Any exceptions during file reading or processing are logged and rethrown.

@@ -48,8 +48,8 @@
             UsernameTxt = new TextBox();
             PasswordTxt = new TextBox();
             BtnLogin = new Button();
-            label1 = new Label();
-            label3 = new Label();
+            UsernameLabel = new Label();
+            PasswordLabel = new Label();
             AttemptsRemainingLabel = new Label();
             AttemptsNumberLabel = new Label();
             StatusLabel = new Label();
@@ -81,7 +81,7 @@
             SidePanelMenu.Dock = DockStyle.Left;
             SidePanelMenu.Location = new Point(0, 0);
             SidePanelMenu.Name = "SidePanelMenu";
-            SidePanelMenu.Size = new Size(206, 492);
+            SidePanelMenu.Size = new Size(206, 514);
             SidePanelMenu.TabIndex = 0;
             // 
             // SeparatePanel
@@ -89,7 +89,7 @@
             SeparatePanel.BackColor = Color.Cyan;
             SeparatePanel.Location = new Point(198, 0);
             SeparatePanel.Name = "SeparatePanel";
-            SeparatePanel.Size = new Size(8, 492);
+            SeparatePanel.Size = new Size(8, 514);
             SeparatePanel.TabIndex = 11;
             // 
             // LoginPanel
@@ -110,7 +110,8 @@
             RegisterBtn.Location = new Point(19, 74);
             RegisterBtn.Name = "RegisterBtn";
             RegisterBtn.Size = new Size(173, 53);
-            RegisterBtn.TabIndex = 10;
+            RegisterBtn.TabIndex = 7;
+            RegisterBtn.TabStop = false;
             RegisterBtn.Text = "     Register";
             RegisterBtn.TextImageRelation = TextImageRelation.ImageBeforeText;
             RegisterBtn.UseVisualStyleBackColor = true;
@@ -127,7 +128,8 @@
             FileHashBtn.Location = new Point(22, 248);
             FileHashBtn.Name = "FileHashBtn";
             FileHashBtn.Size = new Size(170, 53);
-            FileHashBtn.TabIndex = 9;
+            FileHashBtn.TabIndex = 10;
+            FileHashBtn.TabStop = false;
             FileHashBtn.Text = "     File Hash";
             FileHashBtn.TextImageRelation = TextImageRelation.ImageBeforeText;
             FileHashBtn.UseVisualStyleBackColor = true;
@@ -144,7 +146,8 @@
             EncryptionBtn.Location = new Point(19, 189);
             EncryptionBtn.Name = "EncryptionBtn";
             EncryptionBtn.Size = new Size(173, 53);
-            EncryptionBtn.TabIndex = 8;
+            EncryptionBtn.TabIndex = 9;
+            EncryptionBtn.TabStop = false;
             EncryptionBtn.Text = "     Encryption";
             EncryptionBtn.TextImageRelation = TextImageRelation.ImageBeforeText;
             EncryptionBtn.UseVisualStyleBackColor = true;
@@ -161,7 +164,8 @@
             VaultBtn.Location = new Point(19, 133);
             VaultBtn.Name = "VaultBtn";
             VaultBtn.Size = new Size(173, 53);
-            VaultBtn.TabIndex = 7;
+            VaultBtn.TabIndex = 8;
+            VaultBtn.TabStop = false;
             VaultBtn.Text = "     Vault";
             VaultBtn.TextImageRelation = TextImageRelation.ImageBeforeText;
             VaultBtn.UseVisualStyleBackColor = true;
@@ -187,6 +191,7 @@
             LoginBtn.Name = "LoginBtn";
             LoginBtn.Size = new Size(173, 53);
             LoginBtn.TabIndex = 6;
+            LoginBtn.TabStop = false;
             LoginBtn.Text = "     Login";
             LoginBtn.TextImageRelation = TextImageRelation.ImageBeforeText;
             LoginBtn.UseVisualStyleBackColor = true;
@@ -201,8 +206,8 @@
             TopPanelBar.Dock = DockStyle.Top;
             TopPanelBar.Location = new Point(206, 0);
             TopPanelBar.Name = "TopPanelBar";
-            TopPanelBar.Size = new Size(597, 53);
-            TopPanelBar.TabIndex = 1;
+            TopPanelBar.Size = new Size(643, 53);
+            TopPanelBar.TabIndex = 11;
             TopPanelBar.MouseDown += TopPanelBar_MouseDown;
             TopPanelBar.MouseMove += TopPanelBar_MouseMove;
             TopPanelBar.MouseUp += TopPanelBar_MouseUp;
@@ -223,7 +228,7 @@
             MinimizeIcon.BackColor = Color.FromArgb(30, 30, 30);
             MinimizeIcon.Dock = DockStyle.Right;
             MinimizeIcon.Image = (Image)resources.GetObject("MinimizeIcon.Image");
-            MinimizeIcon.Location = new Point(493, 0);
+            MinimizeIcon.Location = new Point(539, 0);
             MinimizeIcon.Name = "MinimizeIcon";
             MinimizeIcon.Size = new Size(52, 53);
             MinimizeIcon.SizeMode = PictureBoxSizeMode.Zoom;
@@ -238,7 +243,7 @@
             ShutdownIcon.BackColor = Color.FromArgb(30, 30, 30);
             ShutdownIcon.Dock = DockStyle.Right;
             ShutdownIcon.Image = (Image)resources.GetObject("ShutdownIcon.Image");
-            ShutdownIcon.Location = new Point(545, 0);
+            ShutdownIcon.Location = new Point(591, 0);
             ShutdownIcon.Name = "ShutdownIcon";
             ShutdownIcon.Size = new Size(52, 53);
             ShutdownIcon.SizeMode = PictureBoxSizeMode.Zoom;
@@ -253,7 +258,7 @@
             WelcomeLabel.AutoSize = true;
             WelcomeLabel.Font = new Font("Century Gothic", 11F);
             WelcomeLabel.ForeColor = Color.White;
-            WelcomeLabel.Location = new Point(6, 362);
+            WelcomeLabel.Location = new Point(6, 383);
             WelcomeLabel.Name = "WelcomeLabel";
             WelcomeLabel.Size = new Size(169, 25);
             WelcomeLabel.TabIndex = 6;
@@ -285,8 +290,8 @@
             UsernameTxt.ForeColor = Color.White;
             UsernameTxt.Location = new Point(80, 53);
             UsernameTxt.Name = "UsernameTxt";
-            UsernameTxt.Size = new Size(493, 34);
-            UsernameTxt.TabIndex = 6;
+            UsernameTxt.Size = new Size(525, 34);
+            UsernameTxt.TabIndex = 0;
             // 
             // PasswordTxt
             // 
@@ -294,8 +299,8 @@
             PasswordTxt.ForeColor = Color.White;
             PasswordTxt.Location = new Point(80, 130);
             PasswordTxt.Name = "PasswordTxt";
-            PasswordTxt.Size = new Size(493, 34);
-            PasswordTxt.TabIndex = 7;
+            PasswordTxt.Size = new Size(525, 34);
+            PasswordTxt.TabIndex = 1;
             PasswordTxt.UseSystemPasswordChar = true;
             // 
             // BtnLogin
@@ -307,37 +312,37 @@
             BtnLogin.ImageAlign = ContentAlignment.MiddleLeft;
             BtnLogin.Location = new Point(80, 166);
             BtnLogin.Name = "BtnLogin";
-            BtnLogin.Size = new Size(493, 42);
-            BtnLogin.TabIndex = 8;
+            BtnLogin.Size = new Size(525, 42);
+            BtnLogin.TabIndex = 2;
             BtnLogin.Text = "&Login";
             BtnLogin.UseVisualStyleBackColor = false;
             BtnLogin.Click += BtnLogin_Click;
             // 
-            // label1
+            // UsernameLabel
             // 
-            label1.AutoSize = true;
-            label1.Font = new Font("Century Gothic", 11F, FontStyle.Regular, GraphicsUnit.Point, 0);
-            label1.Location = new Point(80, 25);
-            label1.Name = "label1";
-            label1.Size = new Size(121, 25);
-            label1.TabIndex = 9;
-            label1.Text = "Username";
+            UsernameLabel.AutoSize = true;
+            UsernameLabel.Font = new Font("Century Gothic", 11F, FontStyle.Regular, GraphicsUnit.Point, 0);
+            UsernameLabel.Location = new Point(80, 25);
+            UsernameLabel.Name = "UsernameLabel";
+            UsernameLabel.Size = new Size(121, 25);
+            UsernameLabel.TabIndex = 9;
+            UsernameLabel.Text = "Username";
             // 
-            // label3
+            // PasswordLabel
             // 
-            label3.AutoSize = true;
-            label3.Font = new Font("Century Gothic", 11F);
-            label3.Location = new Point(75, 102);
-            label3.Name = "label3";
-            label3.Size = new Size(114, 25);
-            label3.TabIndex = 10;
-            label3.Text = "Password";
+            PasswordLabel.AutoSize = true;
+            PasswordLabel.Font = new Font("Century Gothic", 11F);
+            PasswordLabel.Location = new Point(75, 102);
+            PasswordLabel.Name = "PasswordLabel";
+            PasswordLabel.Size = new Size(114, 25);
+            PasswordLabel.TabIndex = 10;
+            PasswordLabel.Text = "Password";
             // 
             // AttemptsRemainingLabel
             // 
             AttemptsRemainingLabel.AutoSize = true;
             AttemptsRemainingLabel.Font = new Font("Century Gothic", 11F);
-            AttemptsRemainingLabel.Location = new Point(289, 383);
+            AttemptsRemainingLabel.Location = new Point(315, 404);
             AttemptsRemainingLabel.Name = "AttemptsRemainingLabel";
             AttemptsRemainingLabel.Size = new Size(250, 25);
             AttemptsRemainingLabel.TabIndex = 11;
@@ -347,7 +352,7 @@
             // 
             AttemptsNumberLabel.AutoSize = true;
             AttemptsNumberLabel.Font = new Font("Century Gothic", 11F);
-            AttemptsNumberLabel.Location = new Point(545, 383);
+            AttemptsNumberLabel.Location = new Point(571, 404);
             AttemptsNumberLabel.Name = "AttemptsNumberLabel";
             AttemptsNumberLabel.Size = new Size(24, 25);
             AttemptsNumberLabel.TabIndex = 12;
@@ -357,7 +362,7 @@
             // 
             StatusLabel.AutoSize = true;
             StatusLabel.Font = new Font("Century Gothic", 11F);
-            StatusLabel.Location = new Point(6, 383);
+            StatusLabel.Location = new Point(6, 404);
             StatusLabel.Name = "StatusLabel";
             StatusLabel.Size = new Size(94, 25);
             StatusLabel.TabIndex = 13;
@@ -368,7 +373,7 @@
             StatusOutputLabel.AutoSize = true;
             StatusOutputLabel.Font = new Font("Century Gothic", 11F);
             StatusOutputLabel.ForeColor = Color.White;
-            StatusOutputLabel.Location = new Point(82, 383);
+            StatusOutputLabel.Location = new Point(104, 404);
             StatusOutputLabel.Name = "StatusOutputLabel";
             StatusOutputLabel.Size = new Size(71, 25);
             StatusOutputLabel.TabIndex = 14;
@@ -385,8 +390,8 @@
             LoginGroupBox.Controls.Add(StatusLabel);
             LoginGroupBox.Controls.Add(AttemptsNumberLabel);
             LoginGroupBox.Controls.Add(AttemptsRemainingLabel);
-            LoginGroupBox.Controls.Add(label3);
-            LoginGroupBox.Controls.Add(label1);
+            LoginGroupBox.Controls.Add(PasswordLabel);
+            LoginGroupBox.Controls.Add(UsernameLabel);
             LoginGroupBox.Controls.Add(BtnLogin);
             LoginGroupBox.Controls.Add(PasswordTxt);
             LoginGroupBox.Controls.Add(UsernameTxt);
@@ -394,9 +399,9 @@
             LoginGroupBox.Controls.Add(pictureBox1);
             LoginGroupBox.Font = new Font("Century Gothic", 11F, FontStyle.Regular, GraphicsUnit.Point, 0);
             LoginGroupBox.ForeColor = Color.White;
-            LoginGroupBox.Location = new Point(212, 59);
+            LoginGroupBox.Location = new Point(221, 59);
             LoginGroupBox.Name = "LoginGroupBox";
-            LoginGroupBox.Size = new Size(579, 421);
+            LoginGroupBox.Size = new Size(611, 443);
             LoginGroupBox.TabIndex = 6;
             LoginGroupBox.TabStop = false;
             LoginGroupBox.Text = "Login";
@@ -410,8 +415,8 @@
             LogoutBtn.ImageAlign = ContentAlignment.MiddleLeft;
             LogoutBtn.Location = new Point(80, 212);
             LogoutBtn.Name = "LogoutBtn";
-            LogoutBtn.Size = new Size(493, 48);
-            LogoutBtn.TabIndex = 17;
+            LogoutBtn.Size = new Size(525, 42);
+            LogoutBtn.TabIndex = 3;
             LogoutBtn.Text = "&Logout";
             LogoutBtn.UseVisualStyleBackColor = false;
             LogoutBtn.Click += LogoutBtn_Click;
@@ -420,10 +425,10 @@
             // 
             ShowPasswordCheckBox.AutoSize = true;
             ShowPasswordCheckBox.Font = new Font("Century Gothic", 11F);
-            ShowPasswordCheckBox.Location = new Point(75, 266);
+            ShowPasswordCheckBox.Location = new Point(80, 260);
             ShowPasswordCheckBox.Name = "ShowPasswordCheckBox";
             ShowPasswordCheckBox.Size = new Size(204, 29);
-            ShowPasswordCheckBox.TabIndex = 16;
+            ShowPasswordCheckBox.TabIndex = 4;
             ShowPasswordCheckBox.Text = "Show Password";
             ShowPasswordCheckBox.UseVisualStyleBackColor = true;
             ShowPasswordCheckBox.CheckedChanged += ShowPasswordCheckBox_CheckedChanged;
@@ -432,25 +437,29 @@
             // 
             RememberMeCheckBox.AutoSize = true;
             RememberMeCheckBox.Font = new Font("Century Gothic", 11F);
-            RememberMeCheckBox.Location = new Point(371, 266);
+            RememberMeCheckBox.Location = new Point(403, 260);
             RememberMeCheckBox.Name = "RememberMeCheckBox";
             RememberMeCheckBox.Size = new Size(202, 29);
-            RememberMeCheckBox.TabIndex = 15;
+            RememberMeCheckBox.TabIndex = 5;
             RememberMeCheckBox.Text = "Remember Me";
             RememberMeCheckBox.UseVisualStyleBackColor = true;
             // 
             // PasswordVault
             // 
+            AcceptButton = BtnLogin;
             AutoScaleDimensions = new SizeF(10F, 25F);
             AutoScaleMode = AutoScaleMode.Font;
             BackColor = Color.FromArgb(30, 30, 30);
-            ClientSize = new Size(803, 492);
+            ClientSize = new Size(849, 514);
+            ControlBox = false;
             Controls.Add(LoginGroupBox);
             Controls.Add(TopPanelBar);
             Controls.Add(SidePanelMenu);
             FormBorderStyle = FormBorderStyle.None;
+            Icon = (Icon)resources.GetObject("$this.Icon");
             Name = "PasswordVault";
             StartPosition = FormStartPosition.CenterScreen;
+            Text = "Password Vault";
             Load += PasswordVault_Load;
             MouseDown += PasswordVault_MouseDown;
             MouseMove += PasswordVault_MouseMove;
@@ -486,8 +495,8 @@
         private TextBox UsernameTxt;
         private TextBox PasswordTxt;
         private Button BtnLogin;
-        private Label label1;
-        private Label label3;
+        private Label UsernameLabel;
+        private Label PasswordLabel;
         private Label AttemptsRemainingLabel;
         private Label AttemptsNumberLabel;
         private Label StatusLabel;

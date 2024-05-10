@@ -36,6 +36,7 @@
             DataGridViewCellStyle dataGridViewCellStyle4 = new DataGridViewCellStyle();
             DataGridViewCellStyle dataGridViewCellStyle5 = new DataGridViewCellStyle();
             vaultBox = new GroupBox();
+            VaultPicturebox = new PictureBox();
             WelcomeLabel = new Label();
             outputLbl = new Label();
             statusLbl = new Label();
@@ -48,12 +49,14 @@
             Username = new DataGridViewTextBoxColumn();
             Password = new DataGridViewTextBoxColumn();
             vaultBox.SuspendLayout();
+            ((System.ComponentModel.ISupportInitialize)VaultPicturebox).BeginInit();
             ((System.ComponentModel.ISupportInitialize)PassVault).BeginInit();
             SuspendLayout();
             // 
             // vaultBox
             // 
             vaultBox.BackColor = Color.FromArgb(30, 30, 30);
+            vaultBox.Controls.Add(VaultPicturebox);
             vaultBox.Controls.Add(WelcomeLabel);
             vaultBox.Controls.Add(outputLbl);
             vaultBox.Controls.Add(statusLbl);
@@ -70,6 +73,15 @@
             vaultBox.TabStop = false;
             vaultBox.Text = "Vault";
             // 
+            // VaultPicturebox
+            // 
+            VaultPicturebox.Image = Properties.Resources.safe;
+            VaultPicturebox.Location = new Point(578, 350);
+            VaultPicturebox.Name = "VaultPicturebox";
+            VaultPicturebox.Size = new Size(70, 75);
+            VaultPicturebox.TabIndex = 14;
+            VaultPicturebox.TabStop = false;
+            // 
             // WelcomeLabel
             // 
             WelcomeLabel.AutoSize = true;
@@ -85,7 +97,7 @@
             // 
             outputLbl.AutoSize = true;
             outputLbl.Font = new Font("Century Gothic", 11F);
-            outputLbl.Location = new Point(90, 400);
+            outputLbl.Location = new Point(104, 400);
             outputLbl.Name = "outputLbl";
             outputLbl.Size = new Size(71, 25);
             outputLbl.TabIndex = 12;
@@ -111,22 +123,22 @@
             PassVault.BackgroundColor = Color.FromArgb(30, 30, 30);
             PassVault.ClipboardCopyMode = DataGridViewClipboardCopyMode.EnableWithoutHeaderText;
             dataGridViewCellStyle1.Alignment = DataGridViewContentAlignment.MiddleLeft;
-            dataGridViewCellStyle1.BackColor = SystemColors.ControlDarkDark;
+            dataGridViewCellStyle1.BackColor = Color.Black;
             dataGridViewCellStyle1.Font = new Font("Century Gothic", 11F, FontStyle.Regular, GraphicsUnit.Point, 0);
             dataGridViewCellStyle1.ForeColor = Color.WhiteSmoke;
-            dataGridViewCellStyle1.SelectionBackColor = SystemColors.ControlDarkDark;
+            dataGridViewCellStyle1.SelectionBackColor = Color.Black;
             dataGridViewCellStyle1.SelectionForeColor = Color.WhiteSmoke;
             dataGridViewCellStyle1.WrapMode = DataGridViewTriState.True;
             PassVault.ColumnHeadersDefaultCellStyle = dataGridViewCellStyle1;
             PassVault.ColumnHeadersHeightSizeMode = DataGridViewColumnHeadersHeightSizeMode.AutoSize;
             PassVault.Columns.AddRange(new DataGridViewColumn[] { Description, Email, Username, Password });
             PassVault.EnableHeadersVisualStyles = false;
-            PassVault.GridColor = Color.WhiteSmoke;
+            PassVault.GridColor = Color.White;
             PassVault.Location = new Point(6, 29);
             PassVault.MultiSelect = false;
             PassVault.Name = "PassVault";
             dataGridViewCellStyle6.Alignment = DataGridViewContentAlignment.MiddleLeft;
-            dataGridViewCellStyle6.BackColor = SystemColors.ControlDarkDark;
+            dataGridViewCellStyle6.BackColor = Color.Black;
             dataGridViewCellStyle6.Font = new Font("Century Gothic", 11F, FontStyle.Regular, GraphicsUnit.Point, 0);
             dataGridViewCellStyle6.ForeColor = Color.WhiteSmoke;
             dataGridViewCellStyle6.SelectionBackColor = SystemColors.Highlight;
@@ -196,10 +208,10 @@
             // 
             // Description
             // 
-            dataGridViewCellStyle2.BackColor = SystemColors.ControlDarkDark;
-            dataGridViewCellStyle2.Font = new Font("Times New Roman", 11F, FontStyle.Bold, GraphicsUnit.Point, 0);
+            dataGridViewCellStyle2.BackColor = Color.Black;
+            dataGridViewCellStyle2.Font = new Font("Century Gothic", 11F, FontStyle.Regular, GraphicsUnit.Point, 0);
             dataGridViewCellStyle2.ForeColor = Color.White;
-            dataGridViewCellStyle2.SelectionBackColor = SystemColors.ControlDarkDark;
+            dataGridViewCellStyle2.SelectionBackColor = Color.Black;
             dataGridViewCellStyle2.SelectionForeColor = Color.White;
             Description.DefaultCellStyle = dataGridViewCellStyle2;
             Description.HeaderText = "Description";
@@ -208,11 +220,11 @@
             // 
             // Email
             // 
-            dataGridViewCellStyle3.BackColor = SystemColors.ControlDarkDark;
-            dataGridViewCellStyle3.Font = new Font("Times New Roman", 11F, FontStyle.Bold, GraphicsUnit.Point, 0);
-            dataGridViewCellStyle3.ForeColor = Color.Gold;
-            dataGridViewCellStyle3.SelectionBackColor = SystemColors.ControlDarkDark;
-            dataGridViewCellStyle3.SelectionForeColor = Color.Gold;
+            dataGridViewCellStyle3.BackColor = Color.Black;
+            dataGridViewCellStyle3.Font = new Font("Century Gothic", 11F, FontStyle.Regular, GraphicsUnit.Point, 0);
+            dataGridViewCellStyle3.ForeColor = Color.White;
+            dataGridViewCellStyle3.SelectionBackColor = Color.Black;
+            dataGridViewCellStyle3.SelectionForeColor = Color.White;
             Email.DefaultCellStyle = dataGridViewCellStyle3;
             Email.HeaderText = "Email";
             Email.MinimumWidth = 8;
@@ -220,11 +232,11 @@
             // 
             // Username
             // 
-            dataGridViewCellStyle4.BackColor = SystemColors.ControlDarkDark;
-            dataGridViewCellStyle4.Font = new Font("Times New Roman", 11F, FontStyle.Bold, GraphicsUnit.Point, 0);
-            dataGridViewCellStyle4.ForeColor = Color.Gold;
-            dataGridViewCellStyle4.SelectionBackColor = SystemColors.ControlDarkDark;
-            dataGridViewCellStyle4.SelectionForeColor = Color.Gold;
+            dataGridViewCellStyle4.BackColor = Color.Black;
+            dataGridViewCellStyle4.Font = new Font("Century Gothic", 11F, FontStyle.Regular, GraphicsUnit.Point, 0);
+            dataGridViewCellStyle4.ForeColor = Color.White;
+            dataGridViewCellStyle4.SelectionBackColor = Color.Black;
+            dataGridViewCellStyle4.SelectionForeColor = Color.White;
             Username.DefaultCellStyle = dataGridViewCellStyle4;
             Username.HeaderText = "Username";
             Username.MinimumWidth = 8;
@@ -232,11 +244,11 @@
             // 
             // Password
             // 
-            dataGridViewCellStyle5.BackColor = SystemColors.ControlDarkDark;
-            dataGridViewCellStyle5.Font = new Font("Times New Roman", 11F, FontStyle.Bold, GraphicsUnit.Point, 0);
-            dataGridViewCellStyle5.ForeColor = Color.Gold;
-            dataGridViewCellStyle5.SelectionBackColor = SystemColors.ControlDarkDark;
-            dataGridViewCellStyle5.SelectionForeColor = Color.Gold;
+            dataGridViewCellStyle5.BackColor = Color.Black;
+            dataGridViewCellStyle5.Font = new Font("Century Gothic", 11F, FontStyle.Regular, GraphicsUnit.Point, 0);
+            dataGridViewCellStyle5.ForeColor = Color.WhiteSmoke;
+            dataGridViewCellStyle5.SelectionBackColor = Color.Black;
+            dataGridViewCellStyle5.SelectionForeColor = Color.WhiteSmoke;
             Password.DefaultCellStyle = dataGridViewCellStyle5;
             Password.HeaderText = "Password";
             Password.MinimumWidth = 8;
@@ -252,6 +264,7 @@
             Size = new Size(691, 487);
             vaultBox.ResumeLayout(false);
             vaultBox.PerformLayout();
+            ((System.ComponentModel.ISupportInitialize)VaultPicturebox).EndInit();
             ((System.ComponentModel.ISupportInitialize)PassVault).EndInit();
             ResumeLayout(false);
         }
@@ -265,6 +278,7 @@
         public GroupBox vaultBox;
         public DataGridView PassVault;
         public Label WelcomeLabel;
+        private PictureBox VaultPicturebox;
         private DataGridViewTextBoxColumn Description;
         private DataGridViewTextBoxColumn Email;
         private DataGridViewTextBoxColumn Username;

@@ -29,6 +29,7 @@
         private void InitializeComponent()
         {
             hashbox = new GroupBox();
+            pictureBox1 = new PictureBox();
             WelcomeLabel = new Label();
             filenamelbl = new Label();
             CalculateHashBtn = new Button();
@@ -36,11 +37,13 @@
             hashoutputtxt = new TextBox();
             HashImportFile = new Button();
             hashbox.SuspendLayout();
+            ((System.ComponentModel.ISupportInitialize)pictureBox1).BeginInit();
             SuspendLayout();
             // 
             // hashbox
             // 
             hashbox.BackColor = Color.FromArgb(30, 30, 30);
+            hashbox.Controls.Add(pictureBox1);
             hashbox.Controls.Add(WelcomeLabel);
             hashbox.Controls.Add(filenamelbl);
             hashbox.Controls.Add(CalculateHashBtn);
@@ -51,17 +54,26 @@
             hashbox.ForeColor = Color.WhiteSmoke;
             hashbox.Location = new Point(39, 73);
             hashbox.Name = "hashbox";
-            hashbox.Size = new Size(930, 304);
+            hashbox.Size = new Size(930, 358);
             hashbox.TabIndex = 12;
             hashbox.TabStop = false;
             hashbox.Text = "File Hash Calculator";
+            // 
+            // pictureBox1
+            // 
+            pictureBox1.Image = Properties.Resources.data_encryption__1_;
+            pictureBox1.Location = new Point(790, 215);
+            pictureBox1.Name = "pictureBox1";
+            pictureBox1.Size = new Size(134, 128);
+            pictureBox1.TabIndex = 22;
+            pictureBox1.TabStop = false;
             // 
             // WelcomeLabel
             // 
             WelcomeLabel.AutoSize = true;
             WelcomeLabel.Font = new Font("Century Gothic", 11F);
             WelcomeLabel.ForeColor = Color.White;
-            WelcomeLabel.Location = new Point(6, 239);
+            WelcomeLabel.Location = new Point(6, 296);
             WelcomeLabel.Name = "WelcomeLabel";
             WelcomeLabel.Size = new Size(169, 25);
             WelcomeLabel.TabIndex = 21;
@@ -72,7 +84,7 @@
             filenamelbl.AutoSize = true;
             filenamelbl.Font = new Font("Century Gothic", 11F);
             filenamelbl.ForeColor = Color.WhiteSmoke;
-            filenamelbl.Location = new Point(7, 264);
+            filenamelbl.Location = new Point(7, 321);
             filenamelbl.Name = "filenamelbl";
             filenamelbl.Size = new Size(175, 25);
             filenamelbl.TabIndex = 20;
@@ -85,6 +97,8 @@
             CalculateHashBtn.FlatStyle = FlatStyle.Flat;
             CalculateHashBtn.Font = new Font("Century Gothic", 11F);
             CalculateHashBtn.ForeColor = Color.WhiteSmoke;
+            CalculateHashBtn.Image = Properties.Resources.cryptography__1_;
+            CalculateHashBtn.ImageAlign = ContentAlignment.MiddleLeft;
             CalculateHashBtn.Location = new Point(7, 116);
             CalculateHashBtn.Name = "CalculateHashBtn";
             CalculateHashBtn.Size = new Size(917, 44);
@@ -105,12 +119,12 @@
             // hashoutputtxt
             // 
             hashoutputtxt.BackColor = Color.FromArgb(30, 30, 30);
-            hashoutputtxt.Font = new Font("Times New Roman", 11F, FontStyle.Bold, GraphicsUnit.Point, 0);
-            hashoutputtxt.ForeColor = Color.Gold;
+            hashoutputtxt.Font = new Font("Century Gothic", 11F, FontStyle.Regular, GraphicsUnit.Point, 0);
+            hashoutputtxt.ForeColor = Color.White;
             hashoutputtxt.Location = new Point(10, 77);
             hashoutputtxt.Name = "hashoutputtxt";
             hashoutputtxt.ReadOnly = true;
-            hashoutputtxt.Size = new Size(914, 33);
+            hashoutputtxt.Size = new Size(914, 34);
             hashoutputtxt.TabIndex = 6;
             // 
             // HashImportFile
@@ -120,6 +134,8 @@
             HashImportFile.FlatStyle = FlatStyle.Flat;
             HashImportFile.Font = new Font("Century Gothic", 11F);
             HashImportFile.ForeColor = Color.WhiteSmoke;
+            HashImportFile.Image = Properties.Resources.open_folder;
+            HashImportFile.ImageAlign = ContentAlignment.MiddleLeft;
             HashImportFile.Location = new Point(6, 165);
             HashImportFile.Name = "HashImportFile";
             HashImportFile.Size = new Size(918, 44);
@@ -138,6 +154,7 @@
             Size = new Size(1008, 554);
             hashbox.ResumeLayout(false);
             hashbox.PerformLayout();
+            ((System.ComponentModel.ISupportInitialize)pictureBox1).EndInit();
             ResumeLayout(false);
         }
 
@@ -150,5 +167,6 @@
         private TextBox hashoutputtxt;
         private Button HashImportFile;
         public Label WelcomeLabel;
+        private PictureBox pictureBox1;
     }
 }

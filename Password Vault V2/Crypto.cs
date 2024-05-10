@@ -1,7 +1,8 @@
-﻿using System.Runtime.InteropServices;
+﻿using System.IO.Compression;
+using System.Runtime.CompilerServices;
+using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using Konscious.Security.Cryptography;
-using System.IO.Compression;
 using Org.BouncyCastle.Crypto.Digests;
 using Org.BouncyCastle.Crypto.Engines;
 using Org.BouncyCastle.Crypto.Macs;
@@ -17,7 +18,7 @@ public static partial class Crypto
     private static partial class Memset
     {
         [LibraryImport("msvcrt.dll", EntryPoint = "memset", SetLastError = false)]
-        [UnmanagedCallConv(CallConvs = [typeof(System.Runtime.CompilerServices.CallConvCdecl)])]
+        [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
         public static partial void MemSet(IntPtr dest, int c, int byteCount);
     }
 
@@ -29,23 +30,129 @@ public static partial class Crypto
         public const int Iterations = 1;
         public const int MemorySize = 1024 * 1024 * 1;
         public const int SaltSize = 128;
-        public const int TagLen = 16;
         public const int HmacLength = 64;
         public const int ChaChaNonceSize = 24;
-        public const int GcmNonceSize = 12;
         public const int KeySize = 32;
         public const int Iv = 16;
         public const int ThreeFish = 128;
         public const int ShuffleKey = 128;
         public const int BlockBitSize = 128;
         public const int KeyBitSize = 256;
+#pragma warning disable CA2211
+
         public static byte[] Hash = [];
-        public static byte[] SecurePasswordSalt { get; set; } = [];
         public static byte[] SecurePassword = [];
 
+#pragma warning restore CA2211
+
         public static readonly RandomNumberGenerator RndNum = RandomNumberGenerator.Create();
+        public static byte[] SecurePasswordSalt { get; set; } = [];
     }
 #pragma warning restore
+
+    /// <summary>
+    ///     Encrypts the contents of a file using Argon2 key derivation and four layers of encryption.
+    /// </summary>
+    /// <param name="userName">The username associated with the user's salt for key derivation.</param>
+    /// <param name="passWord">The user's password used for key derivation.</param>
+    /// <param name="plainText">The plaintext to encrypt.</param>
+    /// <returns>
+    ///     A Task that completes with the encrypted content of the specified file.
+    ///     If any error occurs during the process, returns an empty byte array.
+    /// </returns>
+    /// <remarks>
+    ///     This method performs the following steps:
+    ///     1. Validates input parameters to ensure they are not null or empty.
+    ///     2. Retrieves the user-specific salt for key derivation.
+    ///     3. Derives an encryption key from the user's password and the obtained salt using Argon2id.
+    ///     4. Extracts key components for encryption, including two keys and an HMAC key.
+    ///     5. Reads and encodes the content of the specified file.
+    ///     6. Encrypts the file content using XChaCha20-Poly1305 encryption.
+    ///     7. Clears sensitive information, such as the user's password, from memory.
+    /// </remarks>
+    public static async Task<byte[]> EncryptFile(string userName, byte[] passWord, string plainText)
+    {
+        if (string.IsNullOrEmpty(userName))
+            throw new ArgumentException("Value was empty.", nameof(userName));
+        if (passWord.Length == 0)
+            throw new ArgumentException("Value was empty.", nameof(passWord));
+        if (string.IsNullOrEmpty(plainText))
+            throw new ArgumentException("Value was empty.", nameof(plainText));
+
+        var salt = Authentication.GetUserSalt(userName);
+
+        var bytes = await HashingMethods.Argon2Id(passWord, salt, 544);
+        if (bytes == Array.Empty<byte>())
+            throw new Exception("Value was empty.");
+
+        var fileBytes = DataConversionHelpers.StringToByteArray(await File.ReadAllTextAsync(plainText));
+
+        if (fileBytes == null || fileBytes.Length == 0 || salt == null || salt.Length == 0)
+            throw new ArgumentException("Value was empty.");
+
+        var (key, key2, key3, key4, key5, hMacKey, hMacKey2, hMacKey3) = BufferInit.InitBuffers(bytes);
+
+        var compressedText = await CryptoUtilities.CompressText(fileBytes);
+
+        var encryptedFile = EncryptionDecryption.EncryptV3(ref compressedText, ref key, ref key2, ref key3, ref key4,
+            ref key5, ref hMacKey,
+            ref hMacKey2, ref hMacKey3);
+
+        CryptoUtilities.ClearMemory(key, key2, key3, key4, key5, hMacKey, hMacKey2, hMacKey3, bytes);
+
+        return encryptedFile;
+    }
+
+    /// <summary>
+    ///     Decrypts the contents of an encrypted file using Argon2 key derivation and four layers of decryption.
+    /// </summary>
+    /// <param name="userName">The username associated with the user's salt for key derivation.</param>
+    /// <param name="passWord">The user's password used for key derivation.</param>
+    /// <param name="cipherText">The ciphertext to decrypt.</param>
+    /// <returns>
+    ///     A Task that completes with the decrypted content of the specified encrypted file.
+    ///     If any error occurs during the process, returns an empty byte array.
+    /// </returns>
+    /// <remarks>
+    ///     This method performs the following steps:
+    ///     1. Validates input parameters to ensure they are not null or empty.
+    ///     2. Retrieves the user-specific salts for key derivation.
+    ///     3. Derives an encryption key from the user's password and the obtained salt using Argon2id.
+    ///     4. Extracts key components for decryption, including two keys and an HMAC key.
+    ///     5. Reads and decodes the content of the encrypted file.
+    ///     6. Decrypts the file content using ChaCha20-Poly1305 decryption.
+    ///     7. Clears sensitive information, such as the user's password, from memory.
+    /// </remarks>
+    public static async Task<byte[]> DecryptFile(string userName, byte[] passWord, string cipherText)
+    {
+        if (string.IsNullOrEmpty(userName))
+            throw new ArgumentException("Value was empty.", nameof(userName));
+        if (passWord.Length == 0)
+            throw new ArgumentException("Value was empty.", nameof(passWord));
+        if (string.IsNullOrEmpty(cipherText))
+            throw new ArgumentException("Value was empty.", nameof(cipherText));
+
+        var salt = Authentication.GetUserSalt(userName);
+
+        var bytes = await HashingMethods.Argon2Id(passWord, salt, 544);
+        var (key, key2, key3, key4, key5, hMacKey, hMacKey2, hMacKey3) = BufferInit.InitBuffers(bytes);
+
+        var fileStr = await File.ReadAllTextAsync(cipherText);
+        var fileBytes = DataConversionHelpers.Base64StringToByteArray(fileStr);
+
+        if (fileBytes == Array.Empty<byte>() || salt == Array.Empty<byte>())
+            throw new ArgumentException("Value was empty.");
+
+        var decryptedFile =
+            EncryptionDecryption.DecryptV3(ref fileBytes, ref key, ref key2, ref key3, ref key4, ref key5, ref hMacKey,
+                ref hMacKey2, ref hMacKey3);
+        var decompressedText = await CryptoUtilities.DecompressText(decryptedFile);
+
+        CryptoUtilities.ClearMemory(key, key2, key3, key4, key5, hMacKey, hMacKey2, hMacKey3, bytes);
+
+        return decompressedText;
+    }
+
     public static class HashingMethods
     {
         /// <summary>
@@ -79,7 +186,7 @@ public static partial class Crypto
         /// <param name="input">The byte array to be authenticated.</param>
         /// <param name="key">The key used for HMAC computation.</param>
         /// <returns>The HMAC-SHA3-512 authentication code as a byte array.</returns>
-        public static byte[] Hmacsha3(byte[] input, byte[] key)
+        public static byte[] HmacSha3(byte[] input, byte[] key)
         {
             var digest = new Sha3Digest(512);
 
@@ -95,7 +202,7 @@ public static partial class Crypto
         }
 
         /// <summary>
-        /// Computes the SHA3-512 hash for the given input byte array.
+        ///     Computes the SHA3-512 hash for the given input byte array.
         /// </summary>
         /// <param name="input">The input byte array for which the hash needs to be computed.</param>
         /// <returns>A byte array representing the SHA3-512 hash of the input.</returns>
@@ -192,13 +299,13 @@ public static partial class Crypto
         /// <remarks>
         ///     This method uses fixed-time comparison to mitigate certain types of timing attacks.
         /// </remarks>
-        public static async Task<bool> ComparePassword(byte[]? hash1, byte[]? hash2)
+        public static bool ComparePassword(byte[]? hash1, byte[]? hash2)
         {
             if (hash1 == null || hash1.Length == 0 || hash2 == null || hash2.Length == 0)
                 throw new ArgumentException("Value was empty or null.",
                     hash1 == null || hash1.Length == 0 ? nameof(hash1) : nameof(hash2));
 
-            return await Task.FromResult(CryptographicOperations.FixedTimeEquals(hash1, hash2));
+            return CryptographicOperations.FixedTimeEquals(hash1, hash2);
         }
 
         /// <summary>
@@ -307,14 +414,13 @@ public static partial class Crypto
         }
 
         /// <summary>
-        ///     Clears the sensitive information stored in one or more strings securely.
+        ///     Clears the sensitive information stored in one or more pointers securely.
         /// </summary>
         /// <remarks>
         ///     This method uses a pinned string and the SecureMemoryClear function to overwrite the memory
         ///     containing sensitive information, enhancing security by preventing the information from being
         ///     easily accessible in memory.
         /// </remarks>
-        /// <param name="str">The strings containing sensitive information to be cleared.</param>
         /// <exception cref="ArgumentNullException">Thrown if any of the input strings is null.</exception>
         public static void ClearMemory(int size, params IntPtr[] ptr)
         {
@@ -465,101 +571,6 @@ public static partial class Crypto
     }
 
     /// <summary>
-    ///     Encrypts the contents of a file using Argon2 key derivation and four layers of encryption.
-    /// </summary>
-    /// <param name="userName">The username associated with the user's salt for key derivation.</param>
-    /// <param name="passWord">The user's password used for key derivation.</param>
-    /// <param name="plainText">The plaintext to encrypt.</param>
-    /// <returns>
-    ///     A Task that completes with the encrypted content of the specified file.
-    ///     If any error occurs during the process, returns an empty byte array.
-    /// </returns>
-    /// <remarks>
-    ///     This method performs the following steps:
-    ///     1. Validates input parameters to ensure they are not null or empty.
-    ///     2. Retrieves the user-specific salt for key derivation.
-    ///     3. Derives an encryption key from the user's password and the obtained salt using Argon2id.
-    ///     4. Extracts key components for encryption, including two keys and an HMAC key.
-    ///     5. Reads and encodes the content of the specified file.
-    ///     6. Encrypts the file content using XChaCha20-Poly1305 encryption.
-    ///     7. Clears sensitive information, such as the user's password, from memory.
-    /// </remarks>
-    public static async Task<byte[]> EncryptFile(string userName, byte[] passWord, string plainText)
-    {
-        if (string.IsNullOrEmpty(userName) || passWord == null ||
-            string.IsNullOrEmpty(plainText))
-            throw new ArgumentException("Value was empty.");
-
-        var salt = Authentication.GetUserSalt(userName);
-
-        var bytes = await HashingMethods.Argon2Id(passWord, salt, 544);
-        if (bytes == Array.Empty<byte>())
-            throw new Exception("Value was empty.");
-
-        var fileBytes = DataConversionHelpers.StringToByteArray(await File.ReadAllTextAsync(plainText));
-
-        if (fileBytes == null || fileBytes.Length == 0 || salt == null || salt.Length == 0)
-            throw new ArgumentException("Value was empty.");
-
-        var (key, key2, key3, key4, key5, hMacKey, hMacKey2, hMacKey3) = BufferInit.InitBuffers(bytes);
-
-        var compressedText = await CryptoUtilities.CompressText(fileBytes);
-
-        var encryptedFile = EncryptionDecryption.EncryptV3(ref compressedText, ref key, ref key2, ref key3, ref key4, ref key5, ref hMacKey,
-            ref hMacKey2, ref hMacKey3);
-
-        CryptoUtilities.ClearMemory(key, key2, key3, key4, key5, hMacKey, hMacKey2, hMacKey3, bytes);
-
-        return encryptedFile;
-    }
-
-    /// <summary>
-    ///     Decrypts the contents of an encrypted file using Argon2 key derivation and four layers of decryption.
-    /// </summary>
-    /// <param name="userName">The username associated with the user's salt for key derivation.</param>
-    /// <param name="passWord">The user's password used for key derivation.</param>
-    /// <param name="cipherText">The ciphertext to decrypt.</param>
-    /// <returns>
-    ///     A Task that completes with the decrypted content of the specified encrypted file.
-    ///     If any error occurs during the process, returns an empty byte array.
-    /// </returns>
-    /// <remarks>
-    ///     This method performs the following steps:
-    ///     1. Validates input parameters to ensure they are not null or empty.
-    ///     2. Retrieves the user-specific salts for key derivation.
-    ///     3. Derives an encryption key from the user's password and the obtained salt using Argon2id.
-    ///     4. Extracts key components for decryption, including two keys and an HMAC key.
-    ///     5. Reads and decodes the content of the encrypted file.
-    ///     6. Decrypts the file content using ChaCha20-Poly1305 decryption.
-    ///     7. Clears sensitive information, such as the user's password, from memory.
-    /// </remarks>
-    public static async Task<byte[]> DecryptFile(string userName, byte[] passWord, string cipherText)
-    {
-        if (string.IsNullOrEmpty(userName) || passWord == null ||
-            string.IsNullOrEmpty(cipherText))
-            throw new ArgumentException("Value was empty.");
-
-        var salt = Authentication.GetUserSalt(userName);
-
-        var bytes = await HashingMethods.Argon2Id(passWord, salt, 544);
-        var (key, key2, key3, key4, key5, hMacKey, hMacKey2, hMacKey3) = BufferInit.InitBuffers(bytes);
-
-        var fileStr = await File.ReadAllTextAsync(cipherText);
-        var fileBytes = DataConversionHelpers.Base64StringToByteArray(fileStr);
-
-        if (fileBytes == Array.Empty<byte>() || salt == Array.Empty<byte>())
-            throw new ArgumentException("Value was empty.");
-
-        var decryptedFile =
-            EncryptionDecryption.DecryptV3(ref fileBytes, ref key, ref key2, ref key3, ref key4, ref key5, ref hMacKey, ref hMacKey2, ref hMacKey3);
-        var decompressedText = await CryptoUtilities.DecompressText(decryptedFile);
-
-        CryptoUtilities.ClearMemory(key, key2, key3, key4, key5, hMacKey, hMacKey2, hMacKey3, bytes);
-
-        return decompressedText;
-    }
-
-    /// <summary>
     ///     A class that contains different algorithms for encrypting and decrypting.
     /// </summary>
     public static class Algorithms
@@ -579,10 +590,7 @@ public static partial class Crypto
             var exchanges = new int[size - 1];
             var rand = new Random(BitConverter.ToInt32(key));
 
-            for (var i = size - 1; i > 0; i--)
-            {
-                exchanges[size - 1 - i] = rand.Next(i + 1);
-            }
+            for (var i = size - 1; i > 0; i--) exchanges[size - 1 - i] = rand.Next(i + 1);
 
             return exchanges;
         }
@@ -680,7 +688,7 @@ public static partial class Crypto
         }
 
         /// <summary>
-        /// Encrypts data using the XChaCha20-Poly1305 authenticated encryption algorithm.
+        ///     Encrypts data using the XChaCha20-Poly1305 authenticated encryption algorithm.
         /// </summary>
         /// <param name="input">The data to be encrypted.</param>
         /// <param name="key">The encryption key.</param>
@@ -694,7 +702,7 @@ public static partial class Crypto
         }
 
         /// <summary>
-        /// Decrypts data encrypted using the XChaCha20-Poly1305 authenticated encryption algorithm.
+        ///     Decrypts data encrypted using the XChaCha20-Poly1305 authenticated encryption algorithm.
         /// </summary>
         /// <param name="input">The encrypted data.</param>
         /// <param name="key">The decryption key.</param>
@@ -714,6 +722,7 @@ public static partial class Crypto
         /// </summary>
         /// <param name="inputText">The byte array to be decrypted.</param>
         /// <param name="key">The key used for decryption.</param>
+        /// <param name="iv"></param>
         /// <param name="hMacKey">The key used for HMAC-SHA3 authentication.</param>
         /// <returns>The decrypted byte array.</returns>
         /// <exception cref="ArgumentException">Thrown when the provided inputText, key, or hMacKey is empty or null.</exception>
@@ -754,7 +763,7 @@ public static partial class Crypto
             Buffer.BlockCopy(iv, 0, prependItems, 0, iv.Length);
             Buffer.BlockCopy(cipherText, 0, prependItems, iv.Length, cipherText.Length);
 
-            var tag = HashingMethods.Hmacsha3(prependItems, hMacKey);
+            var tag = HashingMethods.HmacSha3(prependItems, hMacKey);
             var authenticatedBuffer = new byte[prependItems.Length + tag.Length];
             Buffer.BlockCopy(prependItems, 0, authenticatedBuffer, 0, prependItems.Length);
             Buffer.BlockCopy(tag, 0, authenticatedBuffer, prependItems.Length, tag.Length);
@@ -789,12 +798,13 @@ public static partial class Crypto
             aes.Padding = PaddingMode.PKCS7;
 
             var receivedHash = new byte[CryptoConstants.HmacLength];
-            Buffer.BlockCopy(inputText, inputText.Length - CryptoConstants.HmacLength, receivedHash, 0, CryptoConstants.HmacLength);
+            Buffer.BlockCopy(inputText, inputText.Length - CryptoConstants.HmacLength, receivedHash, 0,
+                CryptoConstants.HmacLength);
 
             var cipherWithIv = new byte[inputText.Length - CryptoConstants.HmacLength];
             Buffer.BlockCopy(inputText, 0, cipherWithIv, 0, inputText.Length - CryptoConstants.HmacLength);
 
-            var hashedInput = HashingMethods.Hmacsha3(cipherWithIv, hMacKey);
+            var hashedInput = HashingMethods.HmacSha3(cipherWithIv, hMacKey);
 
             var isMatch = CryptographicOperations.FixedTimeEquals(receivedHash, hashedInput);
             if (!isMatch)
@@ -851,7 +861,7 @@ public static partial class Crypto
             Buffer.BlockCopy(iv, 0, prependItems, 0, iv.Length);
             Buffer.BlockCopy(finalCipherText, 0, prependItems, iv.Length, finalCipherText.Length);
 
-            var tag = HashingMethods.Hmacsha3(prependItems, hMacKey);
+            var tag = HashingMethods.HmacSha3(prependItems, hMacKey);
             var authenticatedBuffer = new byte[prependItems.Length + tag.Length];
             Buffer.BlockCopy(prependItems, 0, authenticatedBuffer, 0, prependItems.Length);
             Buffer.BlockCopy(tag, 0, authenticatedBuffer, prependItems.Length, tag.Length);
@@ -887,7 +897,7 @@ public static partial class Crypto
 
             Buffer.BlockCopy(inputText, 0, cipherWithIv, 0, inputText.Length - CryptoConstants.HmacLength);
 
-            var hashedInput = HashingMethods.Hmacsha3(cipherWithIv, hMacKey);
+            var hashedInput = HashingMethods.HmacSha3(cipherWithIv, hMacKey);
 
             var isMatch = CryptographicOperations.FixedTimeEquals(receivedHash, hashedInput);
 
@@ -948,7 +958,7 @@ public static partial class Crypto
             Buffer.BlockCopy(iv, 0, prependItems, 0, iv.Length);
             Buffer.BlockCopy(finalCipherText, 0, prependItems, iv.Length, finalCipherText.Length);
 
-            var tag = HashingMethods.Hmacsha3(prependItems, hMacKey);
+            var tag = HashingMethods.HmacSha3(prependItems, hMacKey);
             var authenticatedBuffer = new byte[prependItems.Length + tag.Length];
             Buffer.BlockCopy(prependItems, 0, authenticatedBuffer, 0, prependItems.Length);
             Buffer.BlockCopy(tag, 0, authenticatedBuffer, prependItems.Length, tag.Length);
@@ -984,7 +994,7 @@ public static partial class Crypto
 
             Buffer.BlockCopy(inputText, 0, cipherWithIv, 0, inputText.Length - CryptoConstants.HmacLength);
 
-            var hashedInput = HashingMethods.Hmacsha3(cipherWithIv, hMacKey);
+            var hashedInput = HashingMethods.HmacSha3(cipherWithIv, hMacKey);
 
             var isMatch = CryptographicOperations.FixedTimeEquals(receivedHash, hashedInput);
 
@@ -1037,7 +1047,8 @@ public static partial class Crypto
         /// <exception cref="ArgumentException">Thrown when any of the input parameters is an empty array.</exception>
         /// <exception cref="Exception">Thrown when any intermediate or final encrypted value is empty.</exception>
         public static byte[] EncryptV3(ref byte[] plaintext,
-            ref byte[] key, ref byte[] key2, ref byte[] key3, ref byte[] key4, ref byte[] key5, ref byte[] hMacKey, ref byte[] hMacKey2,
+            ref byte[] key, ref byte[] key2, ref byte[] key3, ref byte[] key4, ref byte[] key5, ref byte[] hMacKey,
+            ref byte[] hMacKey2,
             ref byte[] hMacKey3)
         {
             if (plaintext == Array.Empty<byte>())
@@ -1095,7 +1106,8 @@ public static partial class Crypto
         /// <exception cref="ArgumentException">Thrown when any of the input parameters is an empty array.</exception>
         /// <exception cref="Exception">Thrown when any intermediate or final decrypted value is empty.</exception>
         public static byte[] DecryptV3(ref byte[] cipherText,
-            ref byte[] key, ref byte[] key2, ref byte[] key3, ref byte[] key4, ref byte[] key5, ref byte[] hMacKey, ref byte[] hMacKey2,
+            ref byte[] key, ref byte[] key2, ref byte[] key3, ref byte[] key4, ref byte[] key5, ref byte[] hMacKey,
+            ref byte[] hMacKey2,
             ref byte[] hMacKey3)
         {
             if (cipherText == Array.Empty<byte>())
@@ -1131,7 +1143,8 @@ public static partial class Crypto
             var cipherResult =
                 new byte[unshuffledResult.Length - nonce4.Length - nonce3.Length - nonce2.Length - nonce.Length];
 
-            Buffer.BlockCopy(unshuffledResult, nonce.Length + nonce2.Length + nonce3.Length + nonce4.Length, cipherResult,
+            Buffer.BlockCopy(unshuffledResult, nonce.Length + nonce2.Length + nonce3.Length + nonce4.Length,
+                cipherResult,
                 0,
                 cipherResult.Length);
 

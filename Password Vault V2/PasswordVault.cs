@@ -2,8 +2,6 @@ using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text;
 
-#pragma warning disable CA2208
-
 namespace Password_Vault_V2;
 
 public partial class PasswordVault : Form
@@ -19,7 +17,6 @@ public partial class PasswordVault : Form
 
     private class Variables
     {
-        public readonly CancellationTokenSource TokenSource = new();
         public int AttemptsRemaining;
         public GCHandle Handle;
 
@@ -29,6 +26,7 @@ public partial class PasswordVault : Form
         public byte[] PasswordBytes = [];
 
         public CancellationTokenSource RainbowTokenSource = new();
+        public CancellationTokenSource TokenSource = new();
 
         // UI Controls
         public Vault VaultControls { get; } = new();
@@ -45,35 +43,15 @@ public partial class PasswordVault : Form
 
     #region Methods
 
-    private void EnableUi()
-    {
-        UsernameTxt.Enabled = true;
-        PasswordTxt.Enabled = true;
-        BtnLogin.Enabled = true;
-        LogoutBtn.Enabled = true;
-        LoginBtn.Enabled = true;
-        RegisterBtn.Enabled = true;
-        EncryptionBtn.Enabled = true;
-        VaultBtn.Enabled = true;
-        FileHashBtn.Enabled = true;
-    }
-
-    private void DisableUi()
-    {
-        UsernameTxt.Enabled = false;
-        PasswordTxt.Enabled = false;
-        BtnLogin.Enabled = false;
-        LogoutBtn.Enabled = false;
-        LoginBtn.Enabled = false;
-        RegisterBtn.Enabled = false;
-        EncryptionBtn.Enabled = false;
-        VaultBtn.Enabled = false;
-        FileHashBtn.Enabled = false;
-    }
-
     private async void BtnLogin_Click(object sender, EventArgs e)
     {
         _vars.PasswordBytes = Encoding.UTF8.GetBytes(PasswordTxt.Text);
+        _vars.Handle = GCHandle.Alloc(_vars.PasswordBytes, GCHandleType.Pinned);
+
+        Crypto.CryptoConstants.SecurePasswordSalt = Crypto.CryptoUtilities.RndByteSized(128);
+
+        Crypto.CryptoConstants.SecurePassword = ProtectedData.Protect(_vars.PasswordBytes,
+            Crypto.CryptoConstants.SecurePasswordSalt, DataProtectionScope.CurrentUser);
 
         switch (RememberMeCheckBox.Checked)
         {
@@ -105,18 +83,18 @@ public partial class PasswordVault : Form
 
         try
         {
-            if (UsernameTxt.Text == string.Empty)
-                throw new ArgumentException("Value was empty.", nameof(UsernameTxt));
-
-            if (_vars.PasswordBytes.Length == 0)
-                throw new ArgumentException("Value was empty.", nameof(_vars.PasswordBytes));
-
             MessageBox.Show(
                 "Do NOT close the program while loading. This may cause corrupted data that is NOT recoverable.",
                 "Info", MessageBoxButtons.OK, MessageBoxIcon.Exclamation);
 
-            UiController.LogicMethods.DisableUi(UsernameTxt, PasswordTxt, BtnLogin, LogoutBtn, LoginBtn, RegisterBtn,
-                EncryptionBtn, VaultBtn, FileHashBtn);
+            if (UsernameTxt.Text == string.Empty)
+                throw new Exception("An error occured while trying to login. Please make sure your password is correct and try again.");
+
+            if (_vars.PasswordBytes.Length == 0)
+                throw new Exception("An error occured while trying to login. Please make sure your password is correct and try again.");
+
+            UiController.LogicMethods.DisableUi(UsernameTxt, PasswordTxt, BtnLogin, LogoutBtn, RegisterBtn,
+                EncryptionBtn, VaultBtn, FileHashBtn, RememberMeCheckBox, ShowPasswordCheckBox);
 
             var userExists = Authentication.UserExists(UsernameTxt.Text);
 
@@ -126,8 +104,12 @@ public partial class PasswordVault : Form
         {
             Crypto.CryptoUtilities.ClearMemory(_vars.PasswordBytes);
             ErrorLogging.ErrorLog(ex);
+
+            await _vars.TokenSource.CancelAsync();
+
             StatusOutputLabel.Text = "Login failed.";
             StatusOutputLabel.ForeColor = Color.Red;
+
             MessageBox.Show(ex.Message, "Error", MessageBoxButtons.OK,
                 MessageBoxIcon.Error);
 
@@ -135,7 +117,12 @@ public partial class PasswordVault : Form
             AttemptsNumberLabel.Text = _vars.AttemptsRemaining.ToString();
             StatusOutputLabel.ForeColor = Color.White;
             StatusOutputLabel.Text = "Idle...";
-            EnableUi();
+            UiController.LogicMethods.EnableUi(UsernameTxt, PasswordTxt, BtnLogin, LogoutBtn, ShowPasswordCheckBox, RememberMeCheckBox, LoginBtn, RegisterBtn,
+                EncryptionBtn, VaultBtn, FileHashBtn);
+        }
+        finally
+        {
+            _vars.Handle.Free();
         }
     }
 
@@ -154,53 +141,71 @@ public partial class PasswordVault : Form
 
     private async Task StartLoginProcessAsync()
     {
+        if (_vars.TokenSource.IsCancellationRequested)
+            _vars.TokenSource = new CancellationTokenSource();
+
         StartAnimation();
 
-        Authentication.CurrentLoggedInUser = UsernameTxt.Text;
+        var userName = UsernameTxt.Text;
 
         if (ShowPasswordCheckBox.Checked)
             ShowPasswordCheckBox.Checked = false;
 
-        var decryptedBytes = await Crypto.DecryptFile(Authentication.CurrentLoggedInUser, _vars.PasswordBytes,
-            Authentication.GetUserFilePath(Authentication.CurrentLoggedInUser));
+        var decryptedPassword = ProtectedData.Unprotect(Crypto.CryptoConstants.SecurePassword,
+            Crypto.CryptoConstants.SecurePasswordSalt,
+            DataProtectionScope.CurrentUser);
+
+        var decryptedBytes = await Crypto.DecryptFile(userName, decryptedPassword,
+            Authentication.GetUserFilePath(userName));
 
         if (decryptedBytes == Array.Empty<byte>())
-            throw new ArgumentException("Value was empty.", nameof(decryptedBytes));
+            throw new Exception("An error occured. Please try again.");
 
         GC.Collect(GC.MaxGeneration, GCCollectionMode.Aggressive, true, true);
 
         var decryptedText = DataConversionHelpers.ByteArrayToString(decryptedBytes);
-        await File.WriteAllTextAsync(Authentication.GetUserFilePath(Authentication.CurrentLoggedInUser), decryptedText);
+        await File.WriteAllTextAsync(Authentication.GetUserFilePath(userName),
+            decryptedText);
 
-        var salt = Authentication.GetUserSalt(UsernameTxt.Text);
+        var salt = Authentication.GetUserSalt(userName);
 
-        Authentication.GetUserInfo(UsernameTxt.Text);
+        Authentication.GetUserInfo(userName);
 
-        var hashedInput = await Crypto.HashingMethods.Argon2Id(_vars.PasswordBytes, salt, 32);
+        var hashedInput = await Crypto.HashingMethods.Argon2Id(decryptedPassword, salt, 32);
 
-        var encryptedBytes = await Crypto.EncryptFile(Authentication.CurrentLoggedInUser, _vars.PasswordBytes,
-            Authentication.GetUserFilePath(Authentication.CurrentLoggedInUser));
+        var encryptedBytes = await Crypto.EncryptFile(userName, decryptedPassword,
+            Authentication.GetUserFilePath(userName));
 
         if (encryptedBytes == Array.Empty<byte>())
-            throw new ArgumentException("Value was empty.", nameof(decryptedBytes));
+            throw new ArgumentException("An error occured. Please try again.");
 
         GC.Collect(GC.MaxGeneration, GCCollectionMode.Aggressive, true, true);
 
         var encryptedText = DataConversionHelpers.ByteArrayToBase64String(encryptedBytes);
-        await File.WriteAllTextAsync(Authentication.GetUserFilePath(Authentication.CurrentLoggedInUser), encryptedText);
+        await File.WriteAllTextAsync(Authentication.GetUserFilePath(userName),
+            encryptedText);
 
         if (hashedInput == Array.Empty<byte>())
-            throw new ArgumentException("Value was empty.", nameof(hashedInput));
+            throw new ArgumentException("An error occured. Please try again.");
 
-        var loginSuccessful = await Crypto.CryptoUtilities.ComparePassword(hashedInput, Crypto.CryptoConstants.Hash);
+        var loginSuccessful =
+             Crypto.CryptoUtilities.ComparePassword(hashedInput, Crypto.CryptoConstants.Hash);
 
         Crypto.CryptoUtilities.ClearMemory(Crypto.CryptoConstants.Hash, hashedInput);
 
         GC.Collect(GC.MaxGeneration, GCCollectionMode.Aggressive, true, true);
 
+        var encryptedPassword = Crypto.CryptoConstants.SecurePassword = ProtectedData.Protect(decryptedPassword,
+            Crypto.CryptoConstants.SecurePasswordSalt, DataProtectionScope.CurrentUser);
+
+        Crypto.CryptoConstants.SecurePassword = encryptedPassword;
+
+        Crypto.CryptoUtilities.ClearMemory(decryptedPassword);
+
         switch (loginSuccessful)
         {
             case true:
+                Authentication.CurrentLoggedInUser = userName;
                 await HandleLogin();
                 break;
             case false:
@@ -211,7 +216,8 @@ public partial class PasswordVault : Form
 
     private void UserDoesNotExist()
     {
-        EnableUi();
+        UiController.LogicMethods.EnableUi(UsernameTxt, PasswordTxt, BtnLogin, LogoutBtn, LoginBtn, RegisterBtn,
+            EncryptionBtn, VaultBtn, FileHashBtn);
         Crypto.CryptoUtilities.ClearMemory(_vars.PasswordBytes);
         StatusOutputLabel.ForeColor = Color.WhiteSmoke;
         StatusOutputLabel.Text = @"Idle...";
@@ -223,93 +229,63 @@ public partial class PasswordVault : Form
     /// </summary>
     private async Task HandleLogin()
     {
+        byte[] decryptedPassword = [];
+
         if (!File.Exists(Authentication.GetUserFilePath(UsernameTxt.Text)))
             return;
 
-        _vars.Handle = GCHandle.Alloc(_vars.PasswordBytes, GCHandleType.Pinned);
-
-        Crypto.CryptoConstants.SecurePasswordSalt = Crypto.CryptoUtilities.RndByteSized(128);
-        try
+        if (File.Exists(Authentication.GetUserVault(UsernameTxt.Text)))
         {
-            if (File.Exists(Authentication.GetUserVault(UsernameTxt.Text)))
-            {
-                var decryptedVault = await Crypto.DecryptFile(UsernameTxt.Text,
-                    _vars.PasswordBytes, Authentication.GetUserVault(UsernameTxt.Text));
+            decryptedPassword = ProtectedData.Unprotect(Crypto.CryptoConstants.SecurePassword,
+                Crypto.CryptoConstants.SecurePasswordSalt, DataProtectionScope.CurrentUser);
 
-                GC.Collect(GC.MaxGeneration, GCCollectionMode.Aggressive, true, true);
+            var decryptedVault = await Crypto.DecryptFile(Authentication.CurrentLoggedInUser,
+                decryptedPassword, Authentication.GetUserVault(UsernameTxt.Text));
 
-                if (decryptedVault == Array.Empty<byte>())
-                    throw new ArgumentException("Value returned empty or null", nameof(decryptedVault));
+            GC.Collect(GC.MaxGeneration, GCCollectionMode.Aggressive, true, true);
 
-                await File.WriteAllTextAsync(Authentication.GetUserVault(UsernameTxt.Text),
-                    DataConversionHelpers.ByteArrayToString(decryptedVault));
+            if (decryptedVault == Array.Empty<byte>())
+                throw new Exception("An error occured while trying to login. Please make sure your password is correct and try again.");
 
-                _vars.VaultControls.LoadVault();
+            await File.WriteAllTextAsync(Authentication.GetUserVault(Authentication.CurrentLoggedInUser),
+                DataConversionHelpers.ByteArrayToString(decryptedVault));
 
-                var encryptedBytes = await Crypto.EncryptFile(UsernameTxt.Text, _vars.PasswordBytes,
-                    Authentication.GetUserVault(UsernameTxt.Text));
+            _vars.VaultControls.LoadVault();
 
-                GC.Collect(GC.MaxGeneration, GCCollectionMode.Aggressive, true, true);
+            var encryptedBytes = await Crypto.EncryptFile(Authentication.CurrentLoggedInUser, decryptedPassword,
+                Authentication.GetUserVault(UsernameTxt.Text));
 
-                if (encryptedBytes == Array.Empty<byte>())
-                    throw new ArgumentException("Value returned empty or null.", nameof(encryptedBytes));
-
-                await File.WriteAllTextAsync(Authentication.GetUserVault(UsernameTxt.Text),
-                    DataConversionHelpers.ByteArrayToBase64String(encryptedBytes));
-
-                StatusOutputLabel.ForeColor = Color.LimeGreen;
-                StatusOutputLabel.Text = "Access granted";
-                await _vars.TokenSource.CancelAsync();
-                UserLog.LogUser(Authentication.CurrentLoggedInUser);
-
-                Crypto.CryptoConstants.SecurePassword = ProtectedData.Protect(Crypto.CryptoConstants.SecurePassword,
-                    Crypto.CryptoConstants.SecurePasswordSalt, DataProtectionScope.CurrentUser);
-
-                MessageBox.Show("Login successful. Loading vault...", "Login success.",
-                    MessageBoxButtons.OK, MessageBoxIcon.Information);
-
-                EnableUi();
-                UsernameTxt.Enabled = false;
-                PasswordTxt.Enabled = false;
-                BtnLogin.Enabled = false;
-                ShowPasswordCheckBox.Enabled = false;
-                RememberMeCheckBox.Enabled = false;
-                LogoutBtn.Enabled = true;
-                WelcomeLabel.Text = @$"Welcome, {Authentication.CurrentLoggedInUser}!";
-                PasswordTxt.Clear();
-                Crypto.CryptoUtilities.ClearMemory(_vars.PasswordBytes);
-
-                GC.Collect(GC.MaxGeneration, GCCollectionMode.Aggressive, true, true);
-                UiController.LogicMethods.EnableVisibility(WelcomeLabel, _vars.RegisterControls.WelcomeLabel,
-                    _vars.VaultControls.WelcomeLabel,
-                    _vars.EncryptionControls.WelcomeLabel, _vars.FileHashControls.WelcomeLabel);
-
-                return;
-            }
+            GC.Collect(GC.MaxGeneration, GCCollectionMode.Aggressive, true, true);
 
             Crypto.CryptoConstants.SecurePassword = ProtectedData.Protect(Crypto.CryptoConstants.SecurePassword,
                 Crypto.CryptoConstants.SecurePasswordSalt, DataProtectionScope.CurrentUser);
+
+            if (encryptedBytes == Array.Empty<byte>())
+                throw new ArgumentException("An error occured while trying to login. Please make sure your password is correct and try again.");
+
+            await File.WriteAllTextAsync(Authentication.GetUserVault(Authentication.CurrentLoggedInUser),
+                DataConversionHelpers.ByteArrayToBase64String(encryptedBytes));
+
+            Crypto.CryptoUtilities.ClearMemory(_vars.PasswordBytes, decryptedPassword);
 
             StatusOutputLabel.ForeColor = Color.LimeGreen;
             StatusOutputLabel.Text = "Access granted";
             await _vars.TokenSource.CancelAsync();
             UserLog.LogUser(Authentication.CurrentLoggedInUser);
 
-            EnableUi();
-            UsernameTxt.Enabled = false;
-            PasswordTxt.Enabled = false;
-            BtnLogin.Enabled = false;
-            ShowPasswordCheckBox.Enabled = false;
-            RememberMeCheckBox.Enabled = false;
-            LogoutBtn.Enabled = true;
-            Crypto.CryptoUtilities.ClearMemory(_vars.PasswordBytes);
+            Crypto.CryptoUtilities.ClearMemory(decryptedPassword);
 
             MessageBox.Show("Login successful. Loading vault...", "Login success.",
                 MessageBoxButtons.OK, MessageBoxIcon.Information);
 
-            WelcomeLabel.Text = $"Welcome, {Authentication.CurrentLoggedInUser}!";
-            GC.Collect(GC.MaxGeneration, GCCollectionMode.Aggressive, true, true);
+            UiController.LogicMethods.EnableUi(LogoutBtn,
+                RegisterBtn,
+                EncryptionBtn, VaultBtn, FileHashBtn, RememberMeCheckBox);
 
+            WelcomeLabel.Text = @$"Welcome, {Authentication.CurrentLoggedInUser}!";
+            PasswordTxt.Clear();
+
+            GC.Collect(GC.MaxGeneration, GCCollectionMode.Aggressive, true, true);
             UiController.LogicMethods.EnableVisibility(WelcomeLabel, _vars.RegisterControls.WelcomeLabel,
                 _vars.VaultControls.WelcomeLabel,
                 _vars.EncryptionControls.WelcomeLabel, _vars.FileHashControls.WelcomeLabel);
@@ -318,11 +294,41 @@ public partial class PasswordVault : Form
             _vars.VaultControls.WelcomeLabel.Text = $"Welcome, {Authentication.CurrentLoggedInUser}!";
             _vars.EncryptionControls.WelcomeLabel.Text = $"Welcome, {Authentication.CurrentLoggedInUser}!";
             _vars.FileHashControls.WelcomeLabel.Text = $"Welcome, {Authentication.CurrentLoggedInUser}!";
+
+            if (_vars.RainbowTokenSource.IsCancellationRequested)
+                _vars.RainbowTokenSource = new CancellationTokenSource();
+
+            StartRainbowAnimation();
+            return;
         }
-        finally
-        {
-            _vars.Handle.Free();
-        }
+
+        Crypto.CryptoUtilities.ClearMemory(_vars.PasswordBytes, decryptedPassword);
+
+        StatusOutputLabel.ForeColor = Color.LimeGreen;
+        StatusOutputLabel.Text = "Access granted";
+        await _vars.TokenSource.CancelAsync();
+        UserLog.LogUser(Authentication.CurrentLoggedInUser);
+
+        UiController.LogicMethods.EnableUi(LogoutBtn,
+            RegisterBtn,
+            EncryptionBtn, VaultBtn, FileHashBtn, RememberMeCheckBox);
+
+        MessageBox.Show("Login successful. Loading vault...", "Login success.",
+            MessageBoxButtons.OK, MessageBoxIcon.Information);
+
+        Crypto.CryptoUtilities.ClearMemory(decryptedPassword);
+
+        WelcomeLabel.Text = $"Welcome, {Authentication.CurrentLoggedInUser}!";
+        GC.Collect(GC.MaxGeneration, GCCollectionMode.Aggressive, true, true);
+
+        UiController.LogicMethods.EnableVisibility(WelcomeLabel, _vars.RegisterControls.WelcomeLabel,
+            _vars.VaultControls.WelcomeLabel,
+            _vars.EncryptionControls.WelcomeLabel, _vars.FileHashControls.WelcomeLabel);
+
+        _vars.RegisterControls.WelcomeLabel.Text = $"Welcome, {Authentication.CurrentLoggedInUser}!";
+        _vars.VaultControls.WelcomeLabel.Text = $"Welcome, {Authentication.CurrentLoggedInUser}!";
+        _vars.EncryptionControls.WelcomeLabel.Text = $"Welcome, {Authentication.CurrentLoggedInUser}!";
+        _vars.FileHashControls.WelcomeLabel.Text = $"Welcome, {Authentication.CurrentLoggedInUser}!";
 
         if (_vars.RainbowTokenSource.IsCancellationRequested)
             _vars.RainbowTokenSource = new CancellationTokenSource();
@@ -331,16 +337,27 @@ public partial class PasswordVault : Form
     }
 
 
-    private void HandleFailedLogin()
+    private async void HandleFailedLogin()
     {
-        Crypto.CryptoUtilities.ClearMemory(_vars.PasswordBytes.Length * sizeof(byte),
-            _vars.Handle.AddrOfPinnedObject());
-        EnableUi();
+        Crypto.CryptoUtilities.ClearMemory(_vars.PasswordBytes, Crypto.CryptoConstants.SecurePassword,
+            Crypto.CryptoConstants.SecurePasswordSalt);
+
+        UiController.LogicMethods.EnableUi(UsernameTxt, PasswordTxt, BtnLogin, LogoutBtn, LoginBtn, RegisterBtn,
+            EncryptionBtn, VaultBtn, FileHashBtn);
+        UsernameTxt.Enabled = false;
         StatusOutputLabel.ForeColor = Color.Red;
         StatusOutputLabel.Text = @"Login failed.";
-        MessageBox.Show(@"Log in failed! Please recheck your login credentials and try again.", @"Error",
+
+        if (_vars.TokenSource.IsCancellationRequested)
+            _vars.TokenSource = new CancellationTokenSource();
+
+        await _vars.TokenSource.CancelAsync();
+
+        MessageBox.Show("Log in failed! Please recheck your login credentials and try again.", @"Error",
             MessageBoxButtons.OK, MessageBoxIcon.Error);
+
         PasswordTxt.Clear();
+
         StatusOutputLabel.ForeColor = Color.WhiteSmoke;
         StatusOutputLabel.Text = @"Idle...";
         _vars.AttemptsRemaining--;
@@ -354,7 +371,9 @@ public partial class PasswordVault : Form
 
     private async void StartRainbowAnimation()
     {
-        var rainbowTasks = new[] { UiController.Animations.RainbowLabel(WelcomeLabel, _vars.RainbowLabelToken),
+        var rainbowTasks = new[]
+        {
+            UiController.Animations.RainbowLabel(WelcomeLabel, _vars.RainbowLabelToken),
             UiController.Animations.RainbowLabel(_vars.RegisterControls.WelcomeLabel, _vars.RainbowLabelToken),
             UiController.Animations.RainbowLabel(_vars.VaultControls.WelcomeLabel, _vars.RainbowLabelToken),
             UiController.Animations.RainbowLabel(_vars.EncryptionControls.WelcomeLabel, _vars.RainbowLabelToken),
@@ -367,8 +386,11 @@ public partial class PasswordVault : Form
 
     private void PasswordVault_Load(object sender, EventArgs e)
     {
-        UiController.LogicMethods.DisableVisibility(WelcomeLabel, _vars.RegisterControls, _vars.VaultControls,
-            _vars.EncryptionControls, _vars.FileHashControls);
+        UiController.LogicMethods.DisableVisibility(WelcomeLabel, _vars.RegisterControls.WelcomeLabel,
+            _vars.VaultControls.WelcomeLabel,
+            _vars.EncryptionControls.WelcomeLabel, _vars.FileHashControls.WelcomeLabel);
+
+        UsernameTxt.Select();
     }
 
     private void ShowPasswordCheckBox_CheckedChanged(object sender, EventArgs e)
@@ -383,6 +405,7 @@ public partial class PasswordVault : Form
             if (Authentication.CurrentLoggedInUser == string.Empty)
                 throw new Exception("There is no user currently logged in.");
 
+            _vars.VaultControls.PassVault.Rows.Clear();
             Authentication.CurrentLoggedInUser = string.Empty;
             Crypto.CryptoUtilities.ClearMemory(Crypto.CryptoConstants.SecurePassword);
             UiController.LogicMethods.EnableUi(BtnLogin, UsernameTxt, PasswordTxt, ShowPasswordCheckBox,
@@ -410,6 +433,7 @@ public partial class PasswordVault : Form
         catch (Exception ex)
         {
             MessageBox.Show(ex.Message, "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            ErrorLogging.ErrorLog(ex);
         }
     }
 
@@ -493,19 +517,20 @@ public partial class PasswordVault : Form
         SidePanelMarker.Top = LoginBtn.Top;
         LoginGroupBox.Visible = true;
         Controls.Add(LoginGroupBox);
-        Size = Size with { Height = 492 };
-        Size = Size with { Width = 803 };
+        Size = Size with { Height = 514 };
+        Size = Size with { Width = 849 };
         _vars.VaultControls.Visible = false;
         _vars.RegisterControls.Visible = false;
         _vars.EncryptionControls.Visible = false;
         _vars.FileHashControls.Visible = false;
+        AcceptButton = BtnLogin;
     }
 
     private void RegisterBtn_Click(object sender, EventArgs e)
     {
         Size = Size with { Height = 504 };
-        Size = Size with { Width = 670 };
-        _vars.RegisterControls.Location = new Point(200, 45);
+        Size = Size with { Width = 685 };
+        _vars.RegisterControls.Location = new Point(210, 45);
         SidePanelMarker.Height = RegisterBtn.Height;
         SidePanelMarker.Top = RegisterBtn.Top;
         LoginGroupBox.Visible = false;
@@ -514,27 +539,31 @@ public partial class PasswordVault : Form
         _vars.EncryptionControls.Visible = false;
         _vars.FileHashControls.Visible = false;
         Controls.Add(_vars.RegisterControls);
+        _vars.RegisterControls.ParentForm!.AcceptButton = _vars.RegisterControls.CreateAccountBtn;
+        _vars.RegisterControls.userTxt.Select();
     }
 
     private void EncryptionBtn_Click(object sender, EventArgs e)
     {
         Size = Size with { Height = 485 };
-        Size = Size with { Width = 1158 };
+        Size = Size with { Width = 1170 };
         LoginGroupBox.Visible = false;
         _vars.VaultControls.Visible = false;
         _vars.RegisterControls.Visible = false;
         _vars.FileHashControls.Visible = false;
-        _vars.EncryptionControls.Location = new Point(215, 60);
+        _vars.EncryptionControls.Location = new Point(220, 60);
         SidePanelMarker.Height = EncryptionBtn.Height;
         SidePanelMarker.Top = EncryptionBtn.Top;
         _vars.EncryptionControls.Visible = true;
         Controls.Add(_vars.EncryptionControls);
+        _vars.EncryptionControls.CustomPasswordTextBox.Enabled = false;
+        _vars.EncryptionControls.ConfirmPassword.Enabled = false;
     }
 
     private void FileHashBtn_Click(object sender, EventArgs e)
     {
-        Size = Size with { Height = 380 };
-        Size = Size with { Width = 1158 };
+        Size = Size with { Height = 438 };
+        Size = Size with { Width = 1160 };
         LoginGroupBox.Visible = false;
         _vars.VaultControls.Visible = false;
         _vars.RegisterControls.Visible = false;
@@ -599,5 +628,4 @@ public partial class PasswordVault : Form
     }
 
     #endregion
-
 }
