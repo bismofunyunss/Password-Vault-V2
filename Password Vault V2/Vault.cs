@@ -86,7 +86,7 @@ public partial class Vault : UserControl
         try
         {
             if (Authentication.CurrentLoggedInUser == string.Empty)
-                MessageBox.Show("No user is currently logged in.", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                throw new Exception("No user is currently logged in.");
 
             PassVault.Rows.Add();
         }
@@ -102,7 +102,7 @@ public partial class Vault : UserControl
         try
         {
             if (Authentication.CurrentLoggedInUser == string.Empty)
-                MessageBox.Show("No user is currently logged in.", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                throw new Exception("No user is currently logged in.");
 
             if (PassVault.SelectedRows.Count <= 0)
                 return;

@@ -134,7 +134,7 @@
             // 
             ConfirmPassword.BackColor = Color.FromArgb(30, 30, 30);
             ConfirmPassword.Font = new Font("Century Gothic", 11F);
-            ConfirmPassword.ForeColor = Color.Gold;
+            ConfirmPassword.ForeColor = Color.White;
             ConfirmPassword.Location = new Point(10, 131);
             ConfirmPassword.Name = "ConfirmPassword";
             ConfirmPassword.Size = new Size(305, 34);
@@ -154,7 +154,7 @@
             // 
             CustomPasswordTextBox.BackColor = Color.FromArgb(30, 30, 30);
             CustomPasswordTextBox.Font = new Font("Century Gothic", 11F);
-            CustomPasswordTextBox.ForeColor = Color.Gold;
+            CustomPasswordTextBox.ForeColor = Color.White;
             CustomPasswordTextBox.Location = new Point(10, 67);
             CustomPasswordTextBox.Name = "CustomPasswordTextBox";
             CustomPasswordTextBox.Size = new Size(305, 34);

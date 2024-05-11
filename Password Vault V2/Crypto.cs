@@ -27,8 +27,8 @@ public static partial class Crypto
     /// </summary>
     public static class CryptoConstants
     {
-        public const int Iterations = 1;
-        public const int MemorySize = 1024 * 1024 * 1;
+        public const int Iterations = 48;
+        public const int MemorySize = 1024 * 1024 * 6;
         public const int SaltSize = 128;
         public const int HmacLength = 64;
         public const int ChaChaNonceSize = 24;

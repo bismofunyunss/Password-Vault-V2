@@ -26,11 +26,11 @@ public partial class FileHash : UserControl
 
     private async void CalculateHashBtn_Click(object sender, EventArgs e)
     {
-        if (Authentication.CurrentLoggedInUser == string.Empty)
-            throw new Exception("No user is currently logged in.");
-
         try
         {
+            if (Authentication.CurrentLoggedInUser == string.Empty)
+                throw new Exception("No user is currently logged in.");
+
             var result = await CalculateHash(_fileToHash);
             hashoutputtxt.Text = result;
         }
@@ -44,11 +44,11 @@ public partial class FileHash : UserControl
 
     private void HashImportFile_Click(object sender, EventArgs e)
     {
-        if (Authentication.CurrentLoggedInUser == string.Empty)
-            throw new Exception("No user is currently logged in.");
-
         try
         {
+            if (Authentication.CurrentLoggedInUser == string.Empty)
+                throw new Exception("No user is currently logged in.");
+
             using var openFileDialog = new OpenFileDialog();
             openFileDialog.FilterIndex = 1;
             openFileDialog.ShowHiddenFiles = true;

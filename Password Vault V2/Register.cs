@@ -83,7 +83,7 @@ public partial class Register : UserControl
     {
         foreach (Control c in RegisterBox.Controls)
         {
-            if (c == userLbl || c == passLbl || c == confirmPassLbl || c == statusLbl || c == outputLbl)
+            if (c == userLbl || c == passLbl || c == confirmPassLbl || c == statusLbl || c == outputLbl || c == WelcomeLabel)
                 continue;
             c.Enabled = false;
         }

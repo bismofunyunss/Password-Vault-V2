@@ -88,13 +88,13 @@ public partial class PasswordVault : Form
                 "Info", MessageBoxButtons.OK, MessageBoxIcon.Exclamation);
 
             if (UsernameTxt.Text == string.Empty)
-                throw new Exception("An error occured while trying to login. Please make sure your password is correct and try again.");
+                throw new Exception("Username value was empty.");
 
             if (_vars.PasswordBytes.Length == 0)
-                throw new Exception("An error occured while trying to login. Please make sure your password is correct and try again.");
+                throw new Exception("Password value was empty.");
 
-            UiController.LogicMethods.DisableUi(UsernameTxt, PasswordTxt, BtnLogin, LogoutBtn, RegisterBtn,
-                EncryptionBtn, VaultBtn, FileHashBtn, RememberMeCheckBox, ShowPasswordCheckBox);
+            UiController.LogicMethods.DisableUi(UsernameTxt, PasswordTxt, BtnLogin, LogoutBtn,
+                ShowPasswordCheckBox);
 
             var userExists = Authentication.UserExists(UsernameTxt.Text);
 
@@ -117,8 +117,7 @@ public partial class PasswordVault : Form
             AttemptsNumberLabel.Text = _vars.AttemptsRemaining.ToString();
             StatusOutputLabel.ForeColor = Color.White;
             StatusOutputLabel.Text = "Idle...";
-            UiController.LogicMethods.EnableUi(UsernameTxt, PasswordTxt, BtnLogin, LogoutBtn, ShowPasswordCheckBox, RememberMeCheckBox, LoginBtn, RegisterBtn,
-                EncryptionBtn, VaultBtn, FileHashBtn);
+            UiController.LogicMethods.EnableUi(UsernameTxt, PasswordTxt, BtnLogin, LogoutBtn, ShowPasswordCheckBox);
         }
         finally
         {
@@ -216,10 +215,9 @@ public partial class PasswordVault : Form
 
     private void UserDoesNotExist()
     {
-        UiController.LogicMethods.EnableUi(UsernameTxt, PasswordTxt, BtnLogin, LogoutBtn, LoginBtn, RegisterBtn,
-            EncryptionBtn, VaultBtn, FileHashBtn);
+        UiController.LogicMethods.EnableUi(UsernameTxt, PasswordTxt, BtnLogin, LogoutBtn);
         Crypto.CryptoUtilities.ClearMemory(_vars.PasswordBytes);
-        StatusOutputLabel.ForeColor = Color.WhiteSmoke;
+        StatusOutputLabel.ForeColor = Color.White;
         StatusOutputLabel.Text = @"Idle...";
         throw new ArgumentException("Username does not exist.", nameof(UsernameTxt));
     }
@@ -278,9 +276,7 @@ public partial class PasswordVault : Form
             MessageBox.Show("Login successful. Loading vault...", "Login success.",
                 MessageBoxButtons.OK, MessageBoxIcon.Information);
 
-            UiController.LogicMethods.EnableUi(LogoutBtn,
-                RegisterBtn,
-                EncryptionBtn, VaultBtn, FileHashBtn, RememberMeCheckBox);
+            UiController.LogicMethods.EnableUi(LogoutBtn);
 
             WelcomeLabel.Text = @$"Welcome, {Authentication.CurrentLoggedInUser}!";
             PasswordTxt.Clear();
@@ -309,9 +305,7 @@ public partial class PasswordVault : Form
         await _vars.TokenSource.CancelAsync();
         UserLog.LogUser(Authentication.CurrentLoggedInUser);
 
-        UiController.LogicMethods.EnableUi(LogoutBtn,
-            RegisterBtn,
-            EncryptionBtn, VaultBtn, FileHashBtn, RememberMeCheckBox);
+        UiController.LogicMethods.EnableUi(LogoutBtn);
 
         MessageBox.Show("Login successful. Loading vault...", "Login success.",
             MessageBoxButtons.OK, MessageBoxIcon.Information);
@@ -342,8 +336,7 @@ public partial class PasswordVault : Form
         Crypto.CryptoUtilities.ClearMemory(_vars.PasswordBytes, Crypto.CryptoConstants.SecurePassword,
             Crypto.CryptoConstants.SecurePasswordSalt);
 
-        UiController.LogicMethods.EnableUi(UsernameTxt, PasswordTxt, BtnLogin, LogoutBtn, LoginBtn, RegisterBtn,
-            EncryptionBtn, VaultBtn, FileHashBtn);
+        UiController.LogicMethods.EnableUi(UsernameTxt, PasswordTxt, BtnLogin, LogoutBtn);
         UsernameTxt.Enabled = false;
         StatusOutputLabel.ForeColor = Color.Red;
         StatusOutputLabel.Text = @"Login failed.";
@@ -390,6 +383,14 @@ public partial class PasswordVault : Form
             _vars.VaultControls.WelcomeLabel,
             _vars.EncryptionControls.WelcomeLabel, _vars.FileHashControls.WelcomeLabel);
 
+        if (Settings.Default.userName == string.Empty)
+        {
+            UsernameTxt.Text = string.Empty;
+            RememberMeCheckBox.Checked = false;
+            return;
+        }
+        UsernameTxt.Text = Settings.Default.userName;
+        RememberMeCheckBox.Checked = true;
         UsernameTxt.Select();
     }
 
