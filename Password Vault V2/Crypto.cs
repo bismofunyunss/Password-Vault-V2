@@ -1,7 +1,9 @@
 ﻿using System.IO.Compression;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
+using System.Security;
 using System.Security.Cryptography;
+using System.Text;
 using Konscious.Security.Cryptography;
 using Org.BouncyCastle.Crypto.Digests;
 using Org.BouncyCastle.Crypto.Engines;
@@ -15,41 +17,6 @@ namespace Password_Vault_V2;
 
 public static partial class Crypto
 {
-    private static partial class Memset
-    {
-        [LibraryImport("msvcrt.dll", EntryPoint = "memset", SetLastError = false)]
-        [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
-        public static partial void MemSet(IntPtr dest, int c, int byteCount);
-    }
-
-    /// <summary>
-    ///     Utility class for cryptographic settings and initialization.
-    /// </summary>
-    public static class CryptoConstants
-    {
-        public const int Iterations = 48;
-        public const int MemorySize = 1024 * 1024 * 6;
-        public const int SaltSize = 128;
-        public const int HmacLength = 64;
-        public const int ChaChaNonceSize = 24;
-        public const int KeySize = 32;
-        public const int Iv = 16;
-        public const int ThreeFish = 128;
-        public const int ShuffleKey = 128;
-        public const int BlockBitSize = 128;
-        public const int KeyBitSize = 256;
-#pragma warning disable CA2211
-
-        public static byte[] Hash = [];
-        public static byte[] SecurePassword = [];
-
-#pragma warning restore CA2211
-
-        public static readonly RandomNumberGenerator RndNum = RandomNumberGenerator.Create();
-        public static byte[] SecurePasswordSalt { get; set; } = [];
-    }
-#pragma warning restore
-
     /// <summary>
     ///     Encrypts the contents of a file using Argon2 key derivation and four layers of encryption.
     /// </summary>
@@ -93,12 +60,16 @@ public static partial class Crypto
         var (key, key2, key3, key4, key5, hMacKey, hMacKey2, hMacKey3) = BufferInit.InitBuffers(bytes);
 
         var compressedText = await CryptoUtilities.CompressText(fileBytes);
-
         var encryptedFile = EncryptionDecryption.EncryptV3(ref compressedText, ref key, ref key2, ref key3, ref key4,
             ref key5, ref hMacKey,
             ref hMacKey2, ref hMacKey3);
 
-        CryptoUtilities.ClearMemory(key, key2, key3, key4, key5, hMacKey, hMacKey2, hMacKey3, bytes);
+        var arrays = new[]
+        {
+            key, key2, key3, key4, key5, hMacKey, hMacKey2, hMacKey3, bytes
+        };
+
+        CryptoUtilities.ClearMemory(arrays);
 
         return encryptedFile;
     }
@@ -148,9 +119,163 @@ public static partial class Crypto
                 ref hMacKey2, ref hMacKey3);
         var decompressedText = await CryptoUtilities.DecompressText(decryptedFile);
 
-        CryptoUtilities.ClearMemory(key, key2, key3, key4, key5, hMacKey, hMacKey2, hMacKey3, bytes);
+        var arrays = new[]
+        {
+            key, key2, key3, key4, key5, hMacKey, hMacKey2, hMacKey3, bytes
+        };
+        CryptoUtilities.ClearMemory(arrays);
 
         return decompressedText;
+    }
+
+    public static async Task<byte[]> EncryptNonTxt(string userName, string inputFile, byte[] passWord)
+    {
+        if (string.IsNullOrEmpty(userName))
+            throw new ArgumentException("Value was empty.", nameof(userName));
+        if (passWord.Length == 0)
+            throw new ArgumentException("Value was empty.", nameof(passWord));
+        if (string.IsNullOrEmpty(inputFile))
+            throw new ArgumentException("Value was empty.", nameof(inputFile));
+
+        var salt = Authentication.GetUserSalt(userName);
+
+        var bytes = await HashingMethods.Argon2Id(passWord, salt, 544);
+        var (key, key2, key3, key4, key5, hMacKey, hMacKey2, hMacKey3) = BufferInit.InitBuffers(bytes);
+        var fileBytes = await File.ReadAllBytesAsync(inputFile);
+        var encryptedFile = Array.Empty<byte>();
+        try
+        {
+            encryptedFile = EncryptionDecryption.EncryptV3(ref fileBytes, ref key, ref key2, ref key3, ref key4,
+                ref key5, ref hMacKey, ref hMacKey2, ref hMacKey3);
+        }
+        catch (Exception ex)
+        {
+            ErrorLogging.ErrorLog(ex);
+        }
+
+        var arrays = new[]
+        {
+            key, key2, key3, key4, key5, hMacKey, hMacKey2, hMacKey3, bytes
+        };
+        CryptoUtilities.ClearMemory(arrays);
+
+        return encryptedFile;
+    }
+
+    public static async Task<byte[]> DecryptNonTxt(string userName, string inputFile, byte[] passWord)
+    {
+        if (string.IsNullOrEmpty(userName))
+            throw new ArgumentException("Value was empty.", nameof(userName));
+        if (passWord.Length == 0)
+            throw new ArgumentException("Value was empty.", nameof(passWord));
+        if (string.IsNullOrEmpty(inputFile))
+            throw new ArgumentException("Value was empty.", nameof(inputFile));
+
+        var salt = Authentication.GetUserSalt(userName);
+
+        var bytes = await HashingMethods.Argon2Id(passWord, salt, 544);
+        var (key, key2, key3, key4, key5, hMacKey, hMacKey2, hMacKey3) = BufferInit.InitBuffers(bytes);
+        var fileBytes = await File.ReadAllBytesAsync(inputFile);
+        var decryptedFile = Array.Empty<byte>();
+        try
+        {
+            decryptedFile = EncryptionDecryption.DecryptV3(ref fileBytes, ref key, ref key2, ref key3, ref key4,
+                ref key5, ref hMacKey, ref hMacKey2, ref hMacKey3);
+        }
+        catch (Exception ex)
+        {
+            ErrorLogging.ErrorLog(ex);
+        }
+
+        var arrays = new[]
+        {
+            key, key2, key3, key4, key5, hMacKey, hMacKey2, hMacKey3, bytes
+        };
+        CryptoUtilities.ClearMemory(arrays);
+
+        return decryptedFile;
+    }
+
+    private static partial class Memset
+    {
+        [LibraryImport("msvcrt.dll", EntryPoint = "memset", SetLastError = false)]
+        [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
+        public static partial void MemSet(IntPtr dest, int c, int byteCount);
+    }
+
+    /// <summary>
+    ///     Utility class for cryptographic settings and initialization.
+    /// </summary>
+    public static class CryptoConstants
+    {
+        public const int SaltSize = 128;
+        public const int HmacLength = 64;
+        public const int ChaChaNonceSize = 24;
+        public const int KeySize = 32;
+        public const int Iv = 16;
+        public const int ThreeFish = 128;
+        public const int ShuffleKey = 128;
+        public const int BlockBitSize = 128;
+        public const int KeyBitSize = 256;
+        public static int Iterations = Settings.Default.Iterations;
+        public static double MemorySize = Settings.Default.MemorySize * Math.Pow(1024, 2);
+        public static int Parallelism = Settings.Default.Parallelism;
+
+        public static readonly RandomNumberGenerator RndNum = RandomNumberGenerator.Create();
+        public static byte[] SecurePasswordSalt { get; set; } = [];
+#pragma warning disable CA2211
+
+        public static byte[] Hash = [];
+        public static byte[] SecurePassword = [];
+
+#pragma warning restore CA2211
+    }
+
+    public static class ConversionMethods
+    {
+        public static byte[] ToByteArray(SecureString secureString)
+        {
+            if (secureString == null)
+                throw new ArgumentNullException(nameof(secureString), "Value was null.");
+
+            var unmanagedString = IntPtr.Zero;
+            try
+            {
+                // Marshal the SecureString to an unmanaged string
+                unmanagedString = Marshal.SecureStringToGlobalAllocUnicode(secureString);
+
+                // Calculate the number of characters in the SecureString
+                var charCount = secureString.Length;
+
+                // Allocate a byte array to hold the UTF-16 bytes (2 bytes per character)
+                var utf16Bytes = new byte[charCount * sizeof(char)];
+
+                // Copy the UTF-16 bytes from unmanaged memory to the byte array
+                Marshal.Copy(unmanagedString, utf16Bytes, 0, utf16Bytes.Length);
+
+                // Allocate a char array and copy the UTF-16 bytes into it
+                var utf16Chars = new char[charCount];
+                Buffer.BlockCopy(utf16Bytes, 0, utf16Chars, 0, utf16Bytes.Length);
+
+                // Determine the length of the resulting UTF-8 byte array
+                var utf8ByteCount = Encoding.UTF8.GetByteCount(utf16Chars);
+
+                // Allocate a byte array to hold the UTF-8 bytes
+                var utf8Bytes = new byte[utf8ByteCount];
+
+                // Convert the UTF-16 byte array to the UTF-8 byte array
+                Encoding.UTF8.GetBytes(utf16Chars, 0, utf16Chars.Length, utf8Bytes, 0);
+
+                CryptoUtilities.ClearMemory(utf16Bytes);
+                CryptoUtilities.ClearMemory(utf16Chars);
+                return utf8Bytes;
+            }
+            finally
+            {
+                // Zero out the unmanaged memory
+                if (unmanagedString != IntPtr.Zero) Marshal.ZeroFreeGlobalAllocUnicode(unmanagedString);
+            }
+        }
     }
 
     public static class HashingMethods
@@ -164,16 +289,16 @@ public static partial class Crypto
         /// <returns>Either a derived key or password hash byte array.</returns>
         public static async Task<byte[]> Argon2Id(byte[] passWord, byte[] salt, int outputSize)
         {
-            if (passWord == null)
+            if (passWord == null || passWord.Length == 0)
                 throw new ArgumentException("Password cannot be null or empty.", nameof(passWord));
             if (salt == null || salt.Length == 0)
                 throw new ArgumentException("Salt cannot be null or empty.", nameof(salt));
 
             using var argon2 = new Argon2id(passWord);
             argon2.Salt = salt;
-            argon2.DegreeOfParallelism = Environment.ProcessorCount * 2;
+            argon2.DegreeOfParallelism = CryptoConstants.Parallelism;
             argon2.Iterations = CryptoConstants.Iterations;
-            argon2.MemorySize = CryptoConstants.MemorySize;
+            argon2.MemorySize = (int)CryptoConstants.MemorySize;
 
             var result = await argon2.GetBytesAsync(outputSize);
 
@@ -215,6 +340,54 @@ public static partial class Crypto
             digest.DoFinal(result, 0);
 
             return result;
+        }
+    }
+
+    public static class Memory
+    {
+        private static readonly Dictionary<IntPtr, int> MemorySizes = [];
+
+        public static IntPtr AllocateMemory(int size)
+        {
+            var ptr = Marshal.AllocHGlobal(size);
+            MemorySizes[ptr] = size;
+            return ptr;
+        }
+
+        public static void FreeMemory(IntPtr ptr)
+        {
+            if (MemorySizes.ContainsKey(ptr))
+            {
+                MemorySizes.Remove(ptr);
+                Marshal.FreeHGlobal(ptr);
+            }
+            else
+            {
+                throw new ArgumentException("Pointer not found in allocated memory.");
+            }
+        }
+
+        public static void ClearMemory(params IntPtr[] ptrs)
+        {
+            if (ptrs == null)
+                throw new ArgumentNullException(nameof(ptrs), "Input cannot be null.");
+
+            foreach (var ptr in ptrs)
+                if (MemorySizes.TryGetValue(ptr, out var size))
+                    try
+                    {
+                        Memset.MemSet(ptr, 0, size);
+                    }
+                    catch (AccessViolationException ex)
+                    {
+                        ErrorLogging.ErrorLog(ex);
+                        MessageBox.Show(ex.Message, "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                    }
+                else
+                    throw new ArgumentException("Pointer not found in allocated memory.");
+
+            GC.Collect(GC.MaxGeneration, GCCollectionMode.Aggressive, true);
+            GC.WaitForPendingFinalizers();
         }
     }
 
@@ -291,7 +464,7 @@ public static partial class Crypto
         /// <param name="hash1">The first password hash.</param>
         /// <param name="hash2">The second password hash.</param>
         /// <returns>
-        ///     A Task that completes with 'true' if the hashes are equal, and 'false' otherwise.
+        ///     A bool that completes with 'true' if the hashes are equal, and 'false' otherwise.
         /// </returns>
         /// <exception cref="ArgumentException">
         ///     Thrown if either hash is null or empty.
@@ -299,17 +472,18 @@ public static partial class Crypto
         /// <remarks>
         ///     This method uses fixed-time comparison to mitigate certain types of timing attacks.
         /// </remarks>
-        public static bool ComparePassword(byte[]? hash1, byte[]? hash2)
+        public static bool ComparePassword(byte[] hash1, byte[] hash2)
         {
-            if (hash1 == null || hash1.Length == 0 || hash2 == null || hash2.Length == 0)
-                throw new ArgumentException("Value was empty or null.",
-                    hash1 == null || hash1.Length == 0 ? nameof(hash1) : nameof(hash2));
+            if (hash1.Length == 0 || hash1 == null)
+                throw new ArgumentException("Value was empty or null.", nameof(hash1));
+            if (hash2.Length == 0 || hash2 == null)
+                throw new ArgumentException("Value was empty or null.", nameof(hash2));
 
             return CryptographicOperations.FixedTimeEquals(hash1, hash2);
         }
 
         /// <summary>
-        ///     Clears the sensitive information stored in one or more byte arrays securely.
+        ///     Clears the sensitive information stored in one or more byte arrays using memset.
         /// </summary>
         /// <remarks>
         ///     This method uses a pinned array and the SecureMemoryClear function to overwrite the memory
@@ -318,18 +492,18 @@ public static partial class Crypto
         /// </remarks>
         /// <param name="arrays">The byte arrays containing sensitive information to be cleared.</param>
         /// <exception cref="ArgumentNullException">Thrown if any of the input arrays is null.</exception>
-        public static void ClearMemory(params byte[][] arrays)
+        public static void ClearMemory(byte[][] arrays)
         {
             if (arrays == null)
                 throw new ArgumentNullException(nameof(arrays), "Input cannot be null.");
 
-            foreach (var value in arrays)
+            foreach (var byteArray in arrays)
             {
-                var handle = GCHandle.Alloc(value, GCHandleType.Pinned);
+                var handle = GCHandle.Alloc(byteArray, GCHandleType.Pinned);
 
                 try
                 {
-                    Memset.MemSet(handle.AddrOfPinnedObject(), 0, value.Length * sizeof(byte));
+                    Memset.MemSet(handle.AddrOfPinnedObject(), 0, byteArray.Length);
                 }
                 catch (AccessViolationException ex)
                 {
@@ -339,7 +513,29 @@ public static partial class Crypto
                 finally
                 {
                     handle.Free();
+
+                    GC.Collect(GC.MaxGeneration, GCCollectionMode.Aggressive, true);
+                    GC.WaitForPendingFinalizers();
                 }
+            }
+        }
+
+        public static void ClearMemory(byte[] array)
+        {
+            var handle = GCHandle.Alloc(array, GCHandleType.Pinned);
+
+            try
+            {
+                Memset.MemSet(handle.AddrOfPinnedObject(), 0, array.Length * sizeof(byte));
+            }
+            catch (AccessViolationException ex)
+            {
+                ErrorLogging.ErrorLog(ex);
+                MessageBox.Show(ex.Message, "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
+            finally
+            {
+                handle.Free();
             }
         }
 
@@ -353,7 +549,7 @@ public static partial class Crypto
         /// </remarks>
         /// <param name="arrays">The char arrays containing sensitive information to be cleared.</param>
         /// <exception cref="ArgumentNullException">Thrown if any of the input arrays is null.</exception>
-        public static void ClearMemory(params char[][] arrays)
+        public static void ClearMemory(char[][] arrays)
         {
             if (arrays == null)
                 throw new ArgumentNullException(nameof(arrays), "Input strings cannot be null.");
@@ -378,6 +574,44 @@ public static partial class Crypto
             }
         }
 
+        public static void ClearMemory(char[] array)
+        {
+            var handle = GCHandle.Alloc(array, GCHandleType.Pinned);
+
+            try
+            {
+                Memset.MemSet(handle.AddrOfPinnedObject(), 0, array.Length * sizeof(char));
+            }
+            catch (AccessViolationException ex)
+            {
+                ErrorLogging.ErrorLog(ex);
+                MessageBox.Show(ex.Message, "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
+            finally
+            {
+                handle.Free();
+            }
+        }
+
+        public static void ClearMemory(char c)
+        {
+            var handle = GCHandle.Alloc(c, GCHandleType.Pinned);
+
+            try
+            {
+                Memset.MemSet(handle.AddrOfPinnedObject(), 0, 1);
+            }
+            catch (AccessViolationException ex)
+            {
+                ErrorLogging.ErrorLog(ex);
+                MessageBox.Show(ex.Message, "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
+            finally
+            {
+                handle.Free();
+            }
+        }
+
         /// <summary>
         ///     Clears the sensitive information stored in one or more strings securely.
         /// </summary>
@@ -388,7 +622,7 @@ public static partial class Crypto
         /// </remarks>
         /// <param name="str">The strings containing sensitive information to be cleared.</param>
         /// <exception cref="ArgumentNullException">Thrown if any of the input strings is null.</exception>
-        public static void ClearMemory(params string[] str)
+        public static void ClearMemory(params string[][] str)
         {
             if (str == null)
                 throw new ArgumentNullException(nameof(str), "Input strings cannot be null.");
@@ -422,28 +656,25 @@ public static partial class Crypto
         ///     easily accessible in memory.
         /// </remarks>
         /// <exception cref="ArgumentNullException">Thrown if any of the input strings is null.</exception>
-        public static void ClearMemory(int size, params IntPtr[] ptr)
+        public static void ClearMemory(int size, ref IntPtr ptr)
         {
-            if (ptr == null)
-                throw new ArgumentNullException(nameof(ptr), "Input cannot be null.");
+            if (ptr == IntPtr.Zero)
+                throw new ArgumentNullException(nameof(ptr), "Invalid ptr.");
 
-            foreach (var value in ptr)
+            var handle = GCHandle.Alloc(ptr, GCHandleType.Pinned);
+
+            try
             {
-                var handle = GCHandle.Alloc(value, GCHandleType.Pinned);
-
-                try
-                {
-                    Memset.MemSet(handle.AddrOfPinnedObject(), 0, size);
-                }
-                catch (AccessViolationException ex)
-                {
-                    ErrorLogging.ErrorLog(ex);
-                    MessageBox.Show(ex.Message, "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
-                }
-                finally
-                {
-                    handle.Free();
-                }
+                Memset.MemSet(handle.AddrOfPinnedObject(), 0, size);
+            }
+            catch (AccessViolationException ex)
+            {
+                ErrorLogging.ErrorLog(ex);
+                MessageBox.Show(ex.Message, "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
+            finally
+            {
+                handle.Free();
             }
         }
 
@@ -529,7 +760,7 @@ public static partial class Crypto
             var hMackey2 = new byte[CryptoConstants.HmacLength];
             var hMacKey3 = new byte[CryptoConstants.HmacLength];
 
-            CopyBytes(ref src, key, key2, key3, key4, key5, hMacKey, hMackey2, hMacKey3);
+            CopyBytes(src, key, key2, key3, key4, key5, hMacKey, hMackey2, hMacKey3);
 
             return (key, key2, key3, key4, key5, hMacKey, hMackey2, hMacKey3);
         }
@@ -548,7 +779,7 @@ public static partial class Crypto
         ///     Thrown if the total length of destination arrays exceeds the length of the source
         ///     array.
         /// </exception>
-        private static void CopyBytes(ref byte[] src, params byte[][] dest)
+        private static void CopyBytes(byte[] src, params byte[][] dest)
         {
             if (src == null)
                 throw new ArgumentNullException(nameof(src), "Source byte array cannot be null.");
@@ -573,7 +804,7 @@ public static partial class Crypto
     /// <summary>
     ///     A class that contains different algorithms for encrypting and decrypting.
     /// </summary>
-    public static class Algorithms
+    private static class Algorithms
     {
         /// <summary>
         ///     Generates an array of random indices for shuffling based on a given size and key.
@@ -585,7 +816,7 @@ public static partial class Crypto
         ///     The method uses a random number generator with the specified key to generate
         ///     unique indices for shuffling a byte array of the given size.
         /// </remarks>
-        public static int[] GetShuffleExchanges(int size, byte[] key)
+        private static int[] GetShuffleExchanges(int size, byte[] key)
         {
             var exchanges = new int[size - 1];
             var rand = new Random(BitConverter.ToInt32(key));

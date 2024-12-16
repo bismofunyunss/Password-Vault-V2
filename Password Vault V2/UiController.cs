@@ -8,6 +8,7 @@ public static class UiController
         ///     Asynchronously animates the text color of a label to create a rainbow effect.
         /// </summary>
         /// <param name="label">The label to animate.</param>
+        /// <param name="token"></param>
         /// <returns>A task representing the asynchronous operation.</returns>
         public static async Task RainbowLabel(Control label, CancellationToken token)
         {
@@ -30,24 +31,31 @@ public static class UiController
 
         public static async Task AnimateLabel(Label label, string text, CancellationToken token)
         {
-            while (!token.IsCancellationRequested)
-                try
+            try
+            {
+                while (true)
                 {
                     label.Text = text;
                     for (var i = 0; i < 4; i++)
                     {
+                        if (token.IsCancellationRequested)
+                            break;
+
                         label.Text += @".";
                         await Task.Delay(400, token);
                     }
                 }
-                catch (Exception)
-                {
-                    return;
-                }
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                // Handle any errors except for task cancellation
+                MessageBox.Show("An error has occurred.", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                ErrorLogging.ErrorLog(ex);
+            }
         }
     }
 
-    public static class LogicMethods
+public static class LogicMethods
     {
         public static void EnableUi(params Control[] c)
         {

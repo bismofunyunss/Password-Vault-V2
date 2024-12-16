@@ -1,11 +1,13 @@
-﻿namespace Password_Vault_V2
+﻿using System.ComponentModel;
+
+namespace Password_Vault_V2
 {
     partial class Encryption
     {
         /// <summary> 
         /// Required designer variable.
         /// </summary>
-        private System.ComponentModel.IContainer components = null;
+        private IContainer components = null;
 
         /// <summary> 
         /// Clean up any resources being used.
@@ -47,7 +49,7 @@
             ExportFileBtn = new Button();
             ImportFileBtn = new Button();
             FileEncryptDecryptBox.SuspendLayout();
-            ((System.ComponentModel.ISupportInitialize)pictureBox1).BeginInit();
+            ((ISupportInitialize)pictureBox1).BeginInit();
             PasswordBox.SuspendLayout();
             SuspendLayout();
             // 
@@ -77,9 +79,9 @@
             // pictureBox1
             // 
             pictureBox1.Image = Properties.Resources.sha_256;
-            pictureBox1.Location = new Point(780, 264);
+            pictureBox1.Location = new Point(786, 263);
             pictureBox1.Name = "pictureBox1";
-            pictureBox1.Size = new Size(141, 133);
+            pictureBox1.Size = new Size(135, 134);
             pictureBox1.TabIndex = 21;
             pictureBox1.TabStop = false;
             // 
@@ -114,10 +116,10 @@
             // ViewPasswordsCheckbox
             // 
             ViewPasswordsCheckbox.AutoSize = true;
-            ViewPasswordsCheckbox.Location = new Point(334, 103);
+            ViewPasswordsCheckbox.Location = new Point(321, 99);
             ViewPasswordsCheckbox.Name = "ViewPasswordsCheckbox";
             ViewPasswordsCheckbox.Size = new Size(213, 29);
-            ViewPasswordsCheckbox.TabIndex = 26;
+            ViewPasswordsCheckbox.TabIndex = 8;
             ViewPasswordsCheckbox.Text = "Show Passwords";
             ViewPasswordsCheckbox.UseVisualStyleBackColor = true;
             // 
@@ -138,7 +140,7 @@
             ConfirmPassword.Location = new Point(10, 131);
             ConfirmPassword.Name = "ConfirmPassword";
             ConfirmPassword.Size = new Size(305, 34);
-            ConfirmPassword.TabIndex = 24;
+            ConfirmPassword.TabIndex = 6;
             ConfirmPassword.UseSystemPasswordChar = true;
             // 
             // passLbl
@@ -158,16 +160,16 @@
             CustomPasswordTextBox.Location = new Point(10, 67);
             CustomPasswordTextBox.Name = "CustomPasswordTextBox";
             CustomPasswordTextBox.Size = new Size(305, 34);
-            CustomPasswordTextBox.TabIndex = 22;
+            CustomPasswordTextBox.TabIndex = 5;
             CustomPasswordTextBox.UseSystemPasswordChar = true;
             // 
             // CustomPasswordCheckBox
             // 
             CustomPasswordCheckBox.AutoSize = true;
-            CustomPasswordCheckBox.Location = new Point(334, 71);
+            CustomPasswordCheckBox.Location = new Point(321, 67);
             CustomPasswordCheckBox.Name = "CustomPasswordCheckBox";
             CustomPasswordCheckBox.Size = new Size(274, 29);
-            CustomPasswordCheckBox.TabIndex = 18;
+            CustomPasswordCheckBox.TabIndex = 7;
             CustomPasswordCheckBox.Text = "Use Custom Password";
             CustomPasswordCheckBox.UseVisualStyleBackColor = true;
             CustomPasswordCheckBox.CheckedChanged += CustomPasswordCheckBox_CheckedChanged;
@@ -224,7 +226,7 @@
             DecryptBtn.Location = new Point(467, 82);
             DecryptBtn.Name = "DecryptBtn";
             DecryptBtn.Size = new Size(454, 44);
-            DecryptBtn.TabIndex = 8;
+            DecryptBtn.TabIndex = 4;
             DecryptBtn.Text = "&Decrypt";
             DecryptBtn.UseVisualStyleBackColor = false;
             DecryptBtn.Click += DecryptBtn_Click;
@@ -241,7 +243,7 @@
             EncryptBtn.Location = new Point(467, 32);
             EncryptBtn.Name = "EncryptBtn";
             EncryptBtn.Size = new Size(454, 44);
-            EncryptBtn.TabIndex = 7;
+            EncryptBtn.TabIndex = 3;
             EncryptBtn.Text = "&Encrypt";
             EncryptBtn.UseVisualStyleBackColor = false;
             EncryptBtn.Click += EncryptBtn_Click;
@@ -258,7 +260,7 @@
             ExportFileBtn.Location = new Point(6, 82);
             ExportFileBtn.Name = "ExportFileBtn";
             ExportFileBtn.Size = new Size(455, 44);
-            ExportFileBtn.TabIndex = 6;
+            ExportFileBtn.TabIndex = 2;
             ExportFileBtn.Text = "&Export File";
             ExportFileBtn.UseVisualStyleBackColor = false;
             ExportFileBtn.Click += ExportFileBtn_Click;
@@ -275,7 +277,7 @@
             ImportFileBtn.Location = new Point(7, 32);
             ImportFileBtn.Name = "ImportFileBtn";
             ImportFileBtn.Size = new Size(454, 44);
-            ImportFileBtn.TabIndex = 5;
+            ImportFileBtn.TabIndex = 1;
             ImportFileBtn.Text = "&Import File";
             ImportFileBtn.UseVisualStyleBackColor = false;
             ImportFileBtn.Click += ImportFileBtn_Click;
@@ -288,9 +290,10 @@
             Controls.Add(FileEncryptDecryptBox);
             Name = "Encryption";
             Size = new Size(936, 432);
+            Load += Encryption_Load;
             FileEncryptDecryptBox.ResumeLayout(false);
             FileEncryptDecryptBox.PerformLayout();
-            ((System.ComponentModel.ISupportInitialize)pictureBox1).EndInit();
+            ((ISupportInitialize)pictureBox1).EndInit();
             PasswordBox.ResumeLayout(false);
             PasswordBox.PerformLayout();
             ResumeLayout(false);

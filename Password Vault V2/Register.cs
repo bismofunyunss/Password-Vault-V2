@@ -1,5 +1,6 @@
-﻿using System.Diagnostics;
-using System.Runtime.InteropServices;
+﻿using System.ComponentModel;
+using System.Diagnostics;
+using System.Security;
 using System.Text;
 
 namespace Password_Vault_V2;
@@ -14,7 +15,8 @@ public partial class Register : UserControl
         InitializeComponent();
     }
 
-    public static bool CheckPasswordValidity(IReadOnlyCollection<char> password, IReadOnlyCollection<char>? password2 = null)
+    public static bool CheckPasswordValidity(IReadOnlyCollection<char> password,
+        IReadOnlyCollection<char>? password2 = null)
     {
         if (password.Count is 24 or > 120)
             return false;
@@ -22,11 +24,14 @@ public partial class Register : UserControl
         if (!password.Any(char.IsUpper) || !password.Any(char.IsLower) || !password.Any(char.IsDigit))
             return false;
 
-        if (password.Any(char.IsWhiteSpace) || (password2 != null && (password2.Any(char.IsWhiteSpace) || !password.SequenceEqual(password2))))
+        if (password.Any(char.IsWhiteSpace) || (password2 != null &&
+                                                (password2.Any(char.IsWhiteSpace) ||
+                                                 !password.SequenceEqual(password2))))
             return false;
 
         return password.Any(char.IsSymbol) || password.Any(char.IsPunctuation);
     }
+
 
     /// <summary>
     ///     Asynchronously creates a user account with specified username and password.
@@ -38,44 +43,50 @@ public partial class Register : UserControl
 
         var userName = userTxt.Text;
 
-        var passwordBytes = Encoding.UTF8.GetBytes(passTxt.Text);
-        var confirmPasswordBytes = Encoding.UTF8.GetBytes(confirmPassTxt.Text);
-
-        var pinnedPassword = GCHandle.Alloc(passwordBytes, GCHandleType.Pinned);
-
-        var pinnedConfirmPassword = GCHandle.Alloc(confirmPasswordBytes, GCHandleType.Pinned);
-
         var userExists = Authentication.UserExists(userName);
 
-        try
+        if (SecurePassword != null)
         {
-            if (!userExists)
+            var passwordBytes = Crypto.ConversionMethods.ToByteArray(SecurePassword);
+            if (SecureConfirmPassword != null)
             {
-                DisableUi();
+                var confirmPasswordBytes = Crypto.ConversionMethods.ToByteArray(SecureConfirmPassword);
 
-                await RegisterAsync(userName, passwordBytes, confirmPasswordBytes);
+                try
+                {
+                    if (!userExists)
+                    {
+                        DisableUi();
 
+                        await RegisterAsync(userName, Encoding.UTF8.GetBytes(passTxt.Text), Encoding.UTF8.GetBytes(confirmPassTxt.Text));
+                    }
+                    else
+                    {
+                        throw new ArgumentException("Username already exists.", nameof(userName));
+                    }
+                }
+                catch (Exception)
+                {
+                    await _cancellationTokenSource.CancelAsync();
+
+                    if (_cancellationTokenSource.IsCancellationRequested)
+                        _cancellationTokenSource = new CancellationTokenSource();
+
+                    outputLbl.Text = "Idle...";
+                    outputLbl.ForeColor = Color.White;
+                    throw;
+                }
+                finally
+                {
+                    var arrays = new[]
+                    {
+                        passwordBytes, confirmPasswordBytes
+                    };
+
+                    Crypto.CryptoUtilities.ClearMemory(arrays);
+                    GC.Collect(GC.MaxGeneration, GCCollectionMode.Aggressive, true);
+                }
             }
-            else
-            {
-                throw new ArgumentException("Username already exists.", nameof(userName));
-            }
-        }
-        catch (Exception)
-        {
-            if (_cancellationTokenSource.IsCancellationRequested)
-                _cancellationTokenSource = new CancellationTokenSource();
-
-            await _cancellationTokenSource.CancelAsync();
-            outputLbl.Text = "Idle...";
-            outputLbl.ForeColor = Color.White;
-            throw;
-        }
-        finally
-        {
-            Crypto.CryptoUtilities.ClearMemory(passwordBytes, confirmPasswordBytes);
-            pinnedPassword.Free();
-            pinnedConfirmPassword.Free();
         }
     }
 
@@ -83,7 +94,8 @@ public partial class Register : UserControl
     {
         foreach (Control c in RegisterBox.Controls)
         {
-            if (c == userLbl || c == passLbl || c == confirmPassLbl || c == statusLbl || c == outputLbl || c == WelcomeLabel)
+            if (c == userLbl || c == passLbl || c == confirmPassLbl || c == statusLbl || c == outputLbl ||
+                c == WelcomeLabel)
                 continue;
             c.Enabled = false;
         }
@@ -106,14 +118,12 @@ public partial class Register : UserControl
     {
         Process.GetCurrentProcess().PriorityClass = ProcessPriorityClass.Normal;
 
-        if (_cancellationTokenSource.IsCancellationRequested)
-            _cancellationTokenSource = new CancellationTokenSource();
-
         StartAnimation();
 
         var passwordChars = Encoding.UTF8.GetChars(password);
-        var confirmChars = Encoding.UTF8.GetChars(confirmPassword);
-        ValidateUsernameAndPassword(username, ref passwordChars, ref confirmChars);
+        var confirmPasswordChars = Encoding.UTF8.GetChars(confirmPassword);
+
+        ValidateUsernameAndPassword(username, ref passwordChars, ref confirmPasswordChars);
 
         var userName = userTxt.Text;
 
@@ -162,16 +172,28 @@ public partial class Register : UserControl
 
         EnableUi();
 
+        var arrays = new[]
+        {
+            password, confirmPassword
+        };
+        Crypto.CryptoUtilities.ClearMemory(arrays);
+
+        var charArrays = new[]
+        {
+            passwordChars, confirmPasswordChars
+        };
+
+        Crypto.CryptoUtilities.ClearMemory(charArrays);
+
         outputLbl.Text = "Idle...";
         outputLbl.ForeColor = Color.White;
 
-        Crypto.CryptoUtilities.ClearMemory(passTxt.Text, confirmPassTxt.Text);
+        GC.Collect(GC.MaxGeneration, GCCollectionMode.Aggressive, true, true);
+        GC.WaitForPendingFinalizers();
+
         userTxt.Clear();
         passTxt.Clear();
         confirmPassTxt.Clear();
-        Crypto.CryptoUtilities.ClearMemory(password, confirmPassword);
-
-        GC.Collect(GC.MaxGeneration, GCCollectionMode.Aggressive, true, true);
     }
 
 
@@ -246,7 +268,46 @@ public partial class Register : UserControl
         confirmPassTxt.UseSystemPasswordChar = !ShowPasswordCheckBox.Checked;
     }
 
-    private void Register_Load(object sender, EventArgs e)
+    #region TextboxBehavior
+
+    [Browsable(false)] public SecureString? SecurePassword { get; } = new();
+    [Browsable(false)] public SecureString? SecureConfirmPassword { get; } = new();
+
+    public void ClearPassword()
     {
+        passTxt.Clear();
+        SecurePassword?.Clear();
+        SecureConfirmPassword?.Clear();
+        confirmPassTxt.Clear();
     }
+
+    protected override void Dispose(bool disposing)
+    {
+        if (disposing && components != null)
+        {
+            components.Dispose();
+            SecurePassword?.Dispose();
+            SecureConfirmPassword?.Dispose();
+        }
+
+        base.Dispose(disposing);
+    }
+
+    private void passTxt_TextChanged(object sender, EventArgs e)
+    {
+        if (SecurePassword == null)
+            return;
+        SecurePassword.Clear();
+        foreach (var c in passTxt.Text) SecurePassword.AppendChar(c);
+    }
+
+    private void confirmPassTxt_TextChanged(object sender, EventArgs e)
+    {
+        if (SecureConfirmPassword == null)
+            return;
+        SecureConfirmPassword.Clear();
+        foreach (var c in confirmPassTxt.Text) SecureConfirmPassword.AppendChar(c);
+    }
+
+    #endregion TextboxBehavior
 }

@@ -21,8 +21,11 @@ public partial class Encryption : UserControl
     {
         public const int MaximumFileSize = 1_000_000_000;
         public static byte[] PasswordArray = [];
+        public static byte[] EncryptedPassword = [];
+        public static byte[] DecryptedPassword = [];
         public static string LoadedFile = string.Empty;
-        public static string Result = string.Empty;
+        public static byte[] Result = [];
+        public static string FileExtension = string.Empty;
 
         public static bool FileOpened { get; set; }
         public static long FileSize { get; set; }
@@ -49,26 +52,28 @@ public partial class Encryption : UserControl
                 throw new Exception("No file is opened.");
 
             using var saveFileDialog = new SaveFileDialog();
-            saveFileDialog.Filter = "Txt files(*.txt) | *.txt";
+            saveFileDialog.Filter = $"Encrypted Files (*.encrypted)|*.encrypted|{FileProcessingConstants.FileExtension.ToUpper()}" +
+                $" Files (*.{FileProcessingConstants.FileExtension})|*.{FileProcessingConstants.FileExtension}";
             saveFileDialog.FilterIndex = 1;
             saveFileDialog.ShowHiddenFiles = true;
             saveFileDialog.CheckFileExists = false;
             saveFileDialog.CheckPathExists = false;
             saveFileDialog.RestoreDirectory = true;
             saveFileDialog.InitialDirectory =
-                Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Desktop));
+                Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments));
 
             if (saveFileDialog.ShowDialog() != DialogResult.OK)
                 return;
 
             var selectedFileName = saveFileDialog.FileName;
 
-            if (string.IsNullOrEmpty(FileProcessingConstants.Result))
+            if (FileProcessingConstants.Result.Length == 0)
                 return;
+
             await using (var fs = new FileStream(selectedFileName, FileMode.OpenOrCreate, FileAccess.Write))
-            await using (var sw = new StreamWriter(fs, Encoding.UTF8))
             {
-                await sw.WriteAsync(FileProcessingConstants.Result);
+                var fileBytes = FileProcessingConstants.Result;
+                await fs.WriteAsync(fileBytes, 0, fileBytes.Length);
             }
 
             FileOutputLbl.Text = "File saved successfully.";
@@ -76,7 +81,10 @@ public partial class Encryption : UserControl
             MessageBox.Show("File saved successfully.", "Saved successfully", MessageBoxButtons.OK,
                 MessageBoxIcon.Information);
 
-            FileProcessingConstants.Result = string.Empty;
+            FileProcessingConstants.Result = [];
+
+            FileOutputLbl.Text = "Idle...";
+            FileOutputLbl.ForeColor = Color.WhiteSmoke;
         }
         catch (Exception ex)
         {
@@ -94,7 +102,6 @@ public partial class Encryption : UserControl
         var handle = GCHandle.Alloc(FileProcessingConstants.PasswordArray, GCHandleType.Pinned);
         byte[] customPassword = [];
         byte[] confirmPassword = [];
-        byte[] decryptedPassword = [];
 
         try
         {
@@ -116,15 +123,8 @@ public partial class Encryption : UserControl
 
             DecryptingAnimation();
 
-            decryptedPassword = ProtectedData.Unprotect(Crypto.CryptoConstants.SecurePassword,
+            FileProcessingConstants.PasswordArray = ProtectedData.Unprotect(Crypto.CryptoConstants.SecurePassword,
                 Crypto.CryptoConstants.SecurePasswordSalt, DataProtectionScope.CurrentUser);
-
-            FileProcessingConstants.PasswordArray = decryptedPassword;
-
-            var encryptedPassword = ProtectedData.Protect(decryptedPassword, Crypto.CryptoConstants.SecurePasswordSalt,
-                DataProtectionScope.CurrentUser);
-
-            Crypto.CryptoConstants.SecurePassword = encryptedPassword;
 
             if (CustomPasswordCheckBox.Checked)
             {
@@ -136,32 +136,34 @@ public partial class Encryption : UserControl
 
                 FileProcessingConstants.PasswordArray = customPassword;
             }
-
+            
             var decryptedFile =
-                await Crypto.DecryptFile(Authentication.CurrentLoggedInUser, FileProcessingConstants.PasswordArray,
-                    FileProcessingConstants.LoadedFile);
+                await Crypto.DecryptNonTxt(Authentication.CurrentLoggedInUser, FileProcessingConstants.LoadedFile,
+                    FileProcessingConstants.PasswordArray);
+
+            var encryptedPassword = ProtectedData.Protect(FileProcessingConstants.PasswordArray, Crypto.CryptoConstants.SecurePasswordSalt,
+    DataProtectionScope.CurrentUser);
+
+            Crypto.CryptoConstants.SecurePassword = encryptedPassword;
 
             if (decryptedFile == Array.Empty<byte>())
                 throw new Exception("There was an error while decrypting.");
 
+            FileProcessingConstants.Result = decryptedFile;
+
             GC.Collect(GC.MaxGeneration, GCCollectionMode.Aggressive, true, true);
 
-            var str = DataConversionHelpers.ByteArrayToBase64String(decryptedFile);
-
-            if (!string.IsNullOrEmpty(str))
-                FileProcessingConstants.Result = str;
-
-            FileOutputLbl.Text = "File encrypted.";
+            FileOutputLbl.Text = "File decrypted.";
             FileOutputLbl.ForeColor = Color.LimeGreen;
 
             if (_tokenSource.IsCancellationRequested)
                 _tokenSource = new CancellationTokenSource();
 
             await _tokenSource.CancelAsync();
-            Crypto.CryptoUtilities.ClearMemory(decryptedPassword);
+            Crypto.CryptoUtilities.ClearMemory(FileProcessingConstants.DecryptedPassword);
 
             MessageBox.Show(
-                "File was decrypted successfully. You MUST export the file and import it again to decrypt it.",
+                "File was decrypted successfully. Don't forget to export the file and change the extension to the original one.",
                 "Success", MessageBoxButtons.OK,
                 MessageBoxIcon.Information);
 
@@ -182,8 +184,11 @@ public partial class Encryption : UserControl
                 ConfirmPassword.Clear();
             }
 
-            Crypto.CryptoUtilities.ClearMemory(customPassword, confirmPassword, FileProcessingConstants.PasswordArray,
-                decryptedPassword);
+            var arrays = new[]
+            {
+                customPassword, confirmPassword, FileProcessingConstants.PasswordArray, FileProcessingConstants.DecryptedPassword
+            };
+            Crypto.CryptoUtilities.ClearMemory(arrays);
 
             FileOutputLbl.Text = "Error encrypting file.";
             FileOutputLbl.ForeColor = Color.Red;
@@ -199,12 +204,15 @@ public partial class Encryption : UserControl
         finally
         {
             handle.Free();
-            Crypto.CryptoUtilities.ClearMemory(customPassword, confirmPassword, FileProcessingConstants.PasswordArray,
-                decryptedPassword);
+            var arrays = new[]
+            {
+                customPassword, confirmPassword, FileProcessingConstants.PasswordArray, FileProcessingConstants.DecryptedPassword
+            };
+            Crypto.CryptoUtilities.ClearMemory(arrays);
         }
     }
 
-    private async void ImportFileBtn_Click(object sender, EventArgs e)
+    private void ImportFileBtn_Click(object sender, EventArgs e)
     {
         try
         {
@@ -212,37 +220,31 @@ public partial class Encryption : UserControl
                 throw new Exception("No user is currently logged in.");
 
             using var openFileDialog = new OpenFileDialog();
-            openFileDialog.Filter = "Txt files(*.txt) | *.txt";
+            openFileDialog.Filter = "All Files(*.*) | *.*";
+            openFileDialog.Title = "Select a file to encrypt.";
             openFileDialog.FilterIndex = 1;
             openFileDialog.ShowHiddenFiles = true;
             openFileDialog.CheckFileExists = true;
             openFileDialog.CheckPathExists = true;
             openFileDialog.RestoreDirectory = true;
             openFileDialog.InitialDirectory =
-                Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Desktop));
+               Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
 
             if (openFileDialog.ShowDialog() != DialogResult.OK)
                 return;
 
             var selectedFileName = openFileDialog.FileName;
-            var selectedExtension = Path.GetExtension(selectedFileName).ToLower();
             var fileInfo = new FileInfo(selectedFileName);
 
             FileProcessingConstants.FileOpened = true;
             FileProcessingConstants.LoadedFile = selectedFileName;
 
-            await using var fs = new FileStream(selectedFileName, FileMode.OpenOrCreate, FileAccess.Read);
-            using var sr = new StreamReader(fs, Encoding.UTF8);
-            await sr.ReadToEndAsync();
+            FileProcessingConstants.FileExtension = fileInfo.Extension.ToLower();
 
 #pragma warning disable CA2208
 
             if (string.IsNullOrEmpty(selectedFileName))
                 throw new ArgumentException("Value was empty.", nameof(selectedFileName));
-
-            if (selectedExtension != ".txt")
-                throw new ArgumentException("Invalid file extension. Please select a text file.",
-                    nameof(selectedExtension));
 
             if (fileInfo.Length > FileProcessingConstants.MaximumFileSize)
                 throw new ArgumentException("File size is too large.", nameof(FileProcessingConstants.FileSize));
@@ -261,10 +263,20 @@ public partial class Encryption : UserControl
 
             FileOutputLbl.Text = "Idle...";
             FileOutputLbl.ForeColor = Color.WhiteSmoke;
-            FileProcessingConstants.Result = string.Empty;
+            FileProcessingConstants.Result = [];
+        }
+        catch (AccessViolationException ex)
+        {
+            MessageBox.Show(ex.Message, "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            FileSizeNumLbl.Text = "0";
+            FileOutputLbl.Text = "Error loading file.";
+            FileOutputLbl.ForeColor = Color.Red;
+            FileOutputLbl.Text = "Idle...";
+            FileOutputLbl.ForeColor = Color.WhiteSmoke;
+            ErrorLogging.ErrorLog(ex);
         }
         catch (Exception ex)
-        { 
+        {
             MessageBox.Show(ex.Message, "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
             FileSizeNumLbl.Text = "0";
             FileOutputLbl.Text = "Error loading file.";
@@ -280,16 +292,15 @@ public partial class Encryption : UserControl
         var handle = GCHandle.Alloc(FileProcessingConstants.PasswordArray, GCHandleType.Pinned);
         byte[] customPassword = [];
         byte[] confirmPassword = [];
-        byte[] decryptedPassword = [];
 
         try
         {
             MessageBox.Show(
-                "Do NOT close the program while loading. This may cause corrupted data that is NOT recoverable. " +
-                "If using a custom password to encrypt with, MAKE SURE YOU REMEMBER THE PASSWORD! You will NOT be able to " +
-                "decrypt the file without the password. It is separate than the password you use to login with.",
-                "Info",
-                MessageBoxButtons.OK, MessageBoxIcon.Exclamation);
+            "Do NOT close the program while loading. This may cause corrupted data that is NOT recoverable. " +
+            "If using a custom password to encrypt with, MAKE SURE YOU REMEMBER THE PASSWORD! You will NOT be able to " +
+            "decrypt the file without the password. It is separate than the password you use to login with.",
+            "Info",
+            MessageBoxButtons.OK, MessageBoxIcon.Exclamation);
 
             if (Authentication.CurrentLoggedInUser == string.Empty)
                 throw new Exception("No user is currently logged in.");
@@ -305,15 +316,10 @@ public partial class Encryption : UserControl
 
             EncryptingAnimation();
 
-            decryptedPassword = ProtectedData.Unprotect(Crypto.CryptoConstants.SecurePassword,
-                Crypto.CryptoConstants.SecurePasswordSalt, DataProtectionScope.CurrentUser);
+            FileProcessingConstants.DecryptedPassword = ProtectedData.Unprotect(FileProcessingConstants.PasswordArray,
+     Crypto.CryptoConstants.SecurePasswordSalt, DataProtectionScope.CurrentUser);
 
-            FileProcessingConstants.PasswordArray = decryptedPassword;
-
-            var encryptedPassword = ProtectedData.Protect(decryptedPassword, Crypto.CryptoConstants.SecurePasswordSalt,
-                DataProtectionScope.CurrentUser);
-
-            Crypto.CryptoConstants.SecurePassword = encryptedPassword;
+            FileProcessingConstants.PasswordArray = FileProcessingConstants.DecryptedPassword;
 
             if (CustomPasswordCheckBox.Checked)
             {
@@ -326,21 +332,22 @@ public partial class Encryption : UserControl
                 FileProcessingConstants.PasswordArray = customPassword;
             }
 
+
             var encryptedFile =
-                await Crypto.EncryptFile(Authentication.CurrentLoggedInUser, FileProcessingConstants.PasswordArray,
-                    FileProcessingConstants.LoadedFile);
+                await Crypto.EncryptNonTxt(Authentication.CurrentLoggedInUser, FileProcessingConstants.LoadedFile,
+                    FileProcessingConstants.PasswordArray);
+
+            FileProcessingConstants.EncryptedPassword = ProtectedData.Protect(FileProcessingConstants.DecryptedPassword, Crypto.CryptoConstants.SecurePasswordSalt,
+DataProtectionScope.CurrentUser);
+
+            FileProcessingConstants.PasswordArray = FileProcessingConstants.EncryptedPassword;
 
             if (encryptedFile == Array.Empty<byte>())
-            {
                 throw new Exception("There was an error while decrypting.");
-            }
 
             GC.Collect(GC.MaxGeneration, GCCollectionMode.Aggressive, true, true);
 
-            var str = DataConversionHelpers.ByteArrayToBase64String(encryptedFile);
-
-            if (!string.IsNullOrEmpty(str))
-                FileProcessingConstants.Result = str;
+            FileProcessingConstants.Result = encryptedFile;
 
             FileOutputLbl.Text = "File encrypted.";
             FileOutputLbl.ForeColor = Color.LimeGreen;
@@ -349,7 +356,7 @@ public partial class Encryption : UserControl
                 _tokenSource = new CancellationTokenSource();
 
             await _tokenSource.CancelAsync();
-            Crypto.CryptoUtilities.ClearMemory(decryptedPassword);
+            Crypto.CryptoUtilities.ClearMemory(FileProcessingConstants.DecryptedPassword);
 
             MessageBox.Show(
                 "File was encrypted successfully. You MUST export the file and import it again to decrypt it.",
@@ -373,8 +380,11 @@ public partial class Encryption : UserControl
                 ConfirmPassword.Clear();
             }
 
-            Crypto.CryptoUtilities.ClearMemory(customPassword, confirmPassword, FileProcessingConstants.PasswordArray,
-                decryptedPassword);
+            var arrays = new[]
+            {
+                customPassword, confirmPassword, FileProcessingConstants.PasswordArray, FileProcessingConstants.DecryptedPassword
+            };
+            Crypto.CryptoUtilities.ClearMemory(arrays);
 
             FileOutputLbl.Text = "Error encrypting file.";
             FileOutputLbl.ForeColor = Color.Red;
@@ -390,8 +400,11 @@ public partial class Encryption : UserControl
         finally
         {
             handle.Free();
-            Crypto.CryptoUtilities.ClearMemory(customPassword, confirmPassword, FileProcessingConstants.PasswordArray,
-                decryptedPassword);
+            var arrays = new[]
+            {
+                customPassword, confirmPassword, FileProcessingConstants.PasswordArray, FileProcessingConstants.DecryptedPassword
+            };
+            Crypto.CryptoUtilities.ClearMemory(arrays);
         }
     }
 
@@ -407,5 +420,10 @@ public partial class Encryption : UserControl
             CustomPasswordTextBox.Enabled = false;
             ConfirmPassword.Enabled = false;
         }
+    }
+
+    private void Encryption_Load(object sender, EventArgs e)
+    {
+        FileProcessingConstants.PasswordArray = Crypto.CryptoConstants.SecurePassword;
     }
 }

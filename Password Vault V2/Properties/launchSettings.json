@@ -1,0 +1,8 @@
+{
+  "profiles": {
+    "Password Vault V2": {
+      "commandName": "Project",
+      "nativeDebugging": true
+    }
+  }
+}

@@ -1,11 +1,13 @@
-﻿namespace Password_Vault_V2
+﻿using System.ComponentModel;
+
+namespace Password_Vault_V2
 {
     partial class FileHash
     {
         /// <summary> 
         /// Required designer variable.
         /// </summary>
-        private System.ComponentModel.IContainer components = null;
+        private IContainer components = null;
 
         /// <summary> 
         /// Clean up any resources being used.
@@ -37,7 +39,7 @@
             hashoutputtxt = new TextBox();
             HashImportFile = new Button();
             hashbox.SuspendLayout();
-            ((System.ComponentModel.ISupportInitialize)pictureBox1).BeginInit();
+            ((ISupportInitialize)pictureBox1).BeginInit();
             SuspendLayout();
             // 
             // hashbox
@@ -102,7 +104,7 @@
             CalculateHashBtn.Location = new Point(7, 116);
             CalculateHashBtn.Name = "CalculateHashBtn";
             CalculateHashBtn.Size = new Size(917, 44);
-            CalculateHashBtn.TabIndex = 19;
+            CalculateHashBtn.TabIndex = 2;
             CalculateHashBtn.Text = "&Calculate Hash";
             CalculateHashBtn.UseVisualStyleBackColor = false;
             CalculateHashBtn.Click += CalculateHashBtn_Click;
@@ -125,7 +127,7 @@
             hashoutputtxt.Name = "hashoutputtxt";
             hashoutputtxt.ReadOnly = true;
             hashoutputtxt.Size = new Size(914, 34);
-            hashoutputtxt.TabIndex = 6;
+            hashoutputtxt.TabIndex = 1;
             // 
             // HashImportFile
             // 
@@ -139,7 +141,7 @@
             HashImportFile.Location = new Point(6, 165);
             HashImportFile.Name = "HashImportFile";
             HashImportFile.Size = new Size(918, 44);
-            HashImportFile.TabIndex = 5;
+            HashImportFile.TabIndex = 3;
             HashImportFile.Text = "&Import File";
             HashImportFile.UseVisualStyleBackColor = false;
             HashImportFile.Click += HashImportFile_Click;
@@ -154,7 +156,7 @@
             Size = new Size(1008, 554);
             hashbox.ResumeLayout(false);
             hashbox.PerformLayout();
-            ((System.ComponentModel.ISupportInitialize)pictureBox1).EndInit();
+            ((ISupportInitialize)pictureBox1).EndInit();
             ResumeLayout(false);
         }
 

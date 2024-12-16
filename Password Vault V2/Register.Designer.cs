@@ -1,24 +1,13 @@
-﻿namespace Password_Vault_V2
+﻿using System.ComponentModel;
+
+namespace Password_Vault_V2
 {
     partial class Register
     {
         /// <summary> 
         /// Required designer variable.
         /// </summary>
-        private System.ComponentModel.IContainer components = null;
-
-        /// <summary> 
-        /// Clean up any resources being used.
-        /// </summary>
-        /// <param name="disposing">true if managed resources should be disposed; otherwise, false.</param>
-        protected override void Dispose(bool disposing)
-        {
-            if (disposing && (components != null))
-            {
-                components.Dispose();
-            }
-            base.Dispose(disposing);
-        }
+        private IContainer components = null;
 
         #region Component Designer generated code
 
@@ -28,7 +17,7 @@
         /// </summary>
         private void InitializeComponent()
         {
-            System.ComponentModel.ComponentResourceManager resources = new System.ComponentModel.ComponentResourceManager(typeof(Register));
+            ComponentResourceManager resources = new ComponentResourceManager(typeof(Register));
             userLbl = new Label();
             userTxt = new TextBox();
             passLbl = new Label();
@@ -84,6 +73,7 @@
             passTxt.Size = new Size(438, 34);
             passTxt.TabIndex = 2;
             passTxt.UseSystemPasswordChar = true;
+            passTxt.TextChanged += passTxt_TextChanged;
             // 
             // confirmPassLbl
             // 
@@ -105,6 +95,7 @@
             confirmPassTxt.Size = new Size(438, 34);
             confirmPassTxt.TabIndex = 3;
             confirmPassTxt.UseSystemPasswordChar = true;
+            confirmPassTxt.TextChanged += confirmPassTxt_TextChanged;
             // 
             // CreateAccountBtn
             // 
@@ -197,7 +188,6 @@
             Controls.Add(RegisterBox);
             Name = "Register";
             Size = new Size(474, 458);
-            Load += Register_Load;
             RegisterBox.ResumeLayout(false);
             RegisterBox.PerformLayout();
             ResumeLayout(false);

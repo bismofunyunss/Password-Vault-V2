@@ -1,11 +1,13 @@
-﻿namespace Password_Vault_V2
+﻿using System.ComponentModel;
+
+namespace Password_Vault_V2
 {
     partial class Vault
     {
         /// <summary> 
         /// Required designer variable.
         /// </summary>
-        private System.ComponentModel.IContainer components = null;
+        private IContainer components = null;
 
         /// <summary> 
         /// Clean up any resources being used.
@@ -30,27 +32,27 @@
         {
             DataGridViewCellStyle dataGridViewCellStyle1 = new DataGridViewCellStyle();
             DataGridViewCellStyle dataGridViewCellStyle6 = new DataGridViewCellStyle();
-            System.ComponentModel.ComponentResourceManager resources = new System.ComponentModel.ComponentResourceManager(typeof(Vault));
             DataGridViewCellStyle dataGridViewCellStyle2 = new DataGridViewCellStyle();
             DataGridViewCellStyle dataGridViewCellStyle3 = new DataGridViewCellStyle();
             DataGridViewCellStyle dataGridViewCellStyle4 = new DataGridViewCellStyle();
             DataGridViewCellStyle dataGridViewCellStyle5 = new DataGridViewCellStyle();
+            ComponentResourceManager resources = new ComponentResourceManager(typeof(Vault));
             vaultBox = new GroupBox();
             VaultPicturebox = new PictureBox();
             WelcomeLabel = new Label();
             outputLbl = new Label();
             statusLbl = new Label();
             PassVault = new DataGridView();
-            SaveVaultBtn = new Button();
-            AddRowBtn = new Button();
-            DeleteRowBtn = new Button();
             Description = new DataGridViewTextBoxColumn();
             Email = new DataGridViewTextBoxColumn();
             Username = new DataGridViewTextBoxColumn();
             Password = new DataGridViewTextBoxColumn();
+            SaveVaultBtn = new Button();
+            AddRowBtn = new Button();
+            DeleteRowBtn = new Button();
             vaultBox.SuspendLayout();
-            ((System.ComponentModel.ISupportInitialize)VaultPicturebox).BeginInit();
-            ((System.ComponentModel.ISupportInitialize)PassVault).BeginInit();
+            ((ISupportInitialize)VaultPicturebox).BeginInit();
+            ((ISupportInitialize)PassVault).BeginInit();
             SuspendLayout();
             // 
             // vaultBox
@@ -153,58 +155,7 @@
             PassVault.ShowEditingIcon = false;
             PassVault.ShowRowErrors = false;
             PassVault.Size = new Size(642, 163);
-            PassVault.TabIndex = 0;
-            // 
-            // SaveVaultBtn
-            // 
-            SaveVaultBtn.BackColor = Color.FromArgb(30, 30, 30);
-            SaveVaultBtn.FlatAppearance.BorderColor = Color.WhiteSmoke;
-            SaveVaultBtn.FlatStyle = FlatStyle.Flat;
-            SaveVaultBtn.Font = new Font("Century Gothic", 11F, FontStyle.Regular, GraphicsUnit.Point, 0);
-            SaveVaultBtn.ForeColor = Color.WhiteSmoke;
-            SaveVaultBtn.Image = (Image)resources.GetObject("SaveVaultBtn.Image");
-            SaveVaultBtn.ImageAlign = ContentAlignment.MiddleLeft;
-            SaveVaultBtn.Location = new Point(6, 298);
-            SaveVaultBtn.Name = "SaveVaultBtn";
-            SaveVaultBtn.Size = new Size(642, 44);
-            SaveVaultBtn.TabIndex = 7;
-            SaveVaultBtn.Text = "&Save Vault";
-            SaveVaultBtn.UseVisualStyleBackColor = false;
-            SaveVaultBtn.Click += SaveVaultBtn_Click;
-            // 
-            // AddRowBtn
-            // 
-            AddRowBtn.BackColor = Color.FromArgb(30, 30, 30);
-            AddRowBtn.FlatAppearance.BorderColor = Color.WhiteSmoke;
-            AddRowBtn.FlatStyle = FlatStyle.Flat;
-            AddRowBtn.Font = new Font("Century Gothic", 11F, FontStyle.Regular, GraphicsUnit.Point, 0);
-            AddRowBtn.ForeColor = Color.WhiteSmoke;
-            AddRowBtn.Image = (Image)resources.GetObject("AddRowBtn.Image");
-            AddRowBtn.ImageAlign = ContentAlignment.MiddleLeft;
-            AddRowBtn.Location = new Point(6, 198);
-            AddRowBtn.Name = "AddRowBtn";
-            AddRowBtn.Size = new Size(642, 44);
-            AddRowBtn.TabIndex = 5;
-            AddRowBtn.Text = "&Add New Row";
-            AddRowBtn.UseVisualStyleBackColor = false;
-            AddRowBtn.Click += AddRowBtn_Click;
-            // 
-            // DeleteRowBtn
-            // 
-            DeleteRowBtn.BackColor = Color.FromArgb(30, 30, 30);
-            DeleteRowBtn.FlatAppearance.BorderColor = Color.WhiteSmoke;
-            DeleteRowBtn.FlatStyle = FlatStyle.Flat;
-            DeleteRowBtn.Font = new Font("Century Gothic", 11F, FontStyle.Regular, GraphicsUnit.Point, 0);
-            DeleteRowBtn.ForeColor = Color.WhiteSmoke;
-            DeleteRowBtn.Image = (Image)resources.GetObject("DeleteRowBtn.Image");
-            DeleteRowBtn.ImageAlign = ContentAlignment.MiddleLeft;
-            DeleteRowBtn.Location = new Point(6, 248);
-            DeleteRowBtn.Name = "DeleteRowBtn";
-            DeleteRowBtn.Size = new Size(642, 44);
-            DeleteRowBtn.TabIndex = 6;
-            DeleteRowBtn.Text = "&Delete Row";
-            DeleteRowBtn.UseVisualStyleBackColor = false;
-            DeleteRowBtn.Click += DeleteRowBtn_Click;
+            PassVault.TabIndex = 1;
             // 
             // Description
             // 
@@ -254,6 +205,57 @@
             Password.MinimumWidth = 8;
             Password.Name = "Password";
             // 
+            // SaveVaultBtn
+            // 
+            SaveVaultBtn.BackColor = Color.FromArgb(30, 30, 30);
+            SaveVaultBtn.FlatAppearance.BorderColor = Color.WhiteSmoke;
+            SaveVaultBtn.FlatStyle = FlatStyle.Flat;
+            SaveVaultBtn.Font = new Font("Century Gothic", 11F, FontStyle.Regular, GraphicsUnit.Point, 0);
+            SaveVaultBtn.ForeColor = Color.WhiteSmoke;
+            SaveVaultBtn.Image = (Image)resources.GetObject("SaveVaultBtn.Image");
+            SaveVaultBtn.ImageAlign = ContentAlignment.MiddleLeft;
+            SaveVaultBtn.Location = new Point(6, 298);
+            SaveVaultBtn.Name = "SaveVaultBtn";
+            SaveVaultBtn.Size = new Size(642, 44);
+            SaveVaultBtn.TabIndex = 4;
+            SaveVaultBtn.Text = "&Save Vault";
+            SaveVaultBtn.UseVisualStyleBackColor = false;
+            SaveVaultBtn.Click += SaveVaultBtn_Click;
+            // 
+            // AddRowBtn
+            // 
+            AddRowBtn.BackColor = Color.FromArgb(30, 30, 30);
+            AddRowBtn.FlatAppearance.BorderColor = Color.WhiteSmoke;
+            AddRowBtn.FlatStyle = FlatStyle.Flat;
+            AddRowBtn.Font = new Font("Century Gothic", 11F, FontStyle.Regular, GraphicsUnit.Point, 0);
+            AddRowBtn.ForeColor = Color.WhiteSmoke;
+            AddRowBtn.Image = (Image)resources.GetObject("AddRowBtn.Image");
+            AddRowBtn.ImageAlign = ContentAlignment.MiddleLeft;
+            AddRowBtn.Location = new Point(6, 198);
+            AddRowBtn.Name = "AddRowBtn";
+            AddRowBtn.Size = new Size(642, 44);
+            AddRowBtn.TabIndex = 2;
+            AddRowBtn.Text = "&Add New Row";
+            AddRowBtn.UseVisualStyleBackColor = false;
+            AddRowBtn.Click += AddRowBtn_Click;
+            // 
+            // DeleteRowBtn
+            // 
+            DeleteRowBtn.BackColor = Color.FromArgb(30, 30, 30);
+            DeleteRowBtn.FlatAppearance.BorderColor = Color.WhiteSmoke;
+            DeleteRowBtn.FlatStyle = FlatStyle.Flat;
+            DeleteRowBtn.Font = new Font("Century Gothic", 11F, FontStyle.Regular, GraphicsUnit.Point, 0);
+            DeleteRowBtn.ForeColor = Color.WhiteSmoke;
+            DeleteRowBtn.Image = (Image)resources.GetObject("DeleteRowBtn.Image");
+            DeleteRowBtn.ImageAlign = ContentAlignment.MiddleLeft;
+            DeleteRowBtn.Location = new Point(6, 248);
+            DeleteRowBtn.Name = "DeleteRowBtn";
+            DeleteRowBtn.Size = new Size(642, 44);
+            DeleteRowBtn.TabIndex = 3;
+            DeleteRowBtn.Text = "&Delete Row";
+            DeleteRowBtn.UseVisualStyleBackColor = false;
+            DeleteRowBtn.Click += DeleteRowBtn_Click;
+            // 
             // Vault
             // 
             AutoScaleDimensions = new SizeF(10F, 25F);
@@ -264,8 +266,8 @@
             Size = new Size(691, 487);
             vaultBox.ResumeLayout(false);
             vaultBox.PerformLayout();
-            ((System.ComponentModel.ISupportInitialize)VaultPicturebox).EndInit();
-            ((System.ComponentModel.ISupportInitialize)PassVault).EndInit();
+            ((ISupportInitialize)VaultPicturebox).EndInit();
+            ((ISupportInitialize)PassVault).EndInit();
             ResumeLayout(false);
         }
 

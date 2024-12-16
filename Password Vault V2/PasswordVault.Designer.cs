@@ -1,24 +1,13 @@
-﻿namespace Password_Vault_V2
+﻿using System.ComponentModel;
+
+namespace Password_Vault_V2
 {
     partial class PasswordVault
     {
         /// <summary>
         ///  Required designer variable.
         /// </summary>
-        private System.ComponentModel.IContainer components = null;
-
-        /// <summary>
-        ///  Clean up any resources being used.
-        /// </summary>
-        /// <param name="disposing">true if managed resources should be disposed; otherwise, false.</param>
-        protected override void Dispose(bool disposing)
-        {
-            if (disposing && (components != null))
-            {
-                components.Dispose();
-            }
-            base.Dispose(disposing);
-        }
+        private IContainer components = null;
 
         #region Windows Form Designer generated code
 
@@ -28,8 +17,9 @@
         /// </summary>
         private void InitializeComponent()
         {
-            System.ComponentModel.ComponentResourceManager resources = new System.ComponentModel.ComponentResourceManager(typeof(PasswordVault));
+            ComponentResourceManager resources = new ComponentResourceManager(typeof(PasswordVault));
             SidePanelMenu = new Panel();
+            CryptoSettingsBtn = new Button();
             SeparatePanel = new Panel();
             LoginPanel = new Panel();
             RegisterBtn = new Button();
@@ -46,7 +36,6 @@
             pictureBox1 = new PictureBox();
             pictureBox3 = new PictureBox();
             UsernameTxt = new TextBox();
-            PasswordTxt = new TextBox();
             BtnLogin = new Button();
             UsernameLabel = new Label();
             PasswordLabel = new Label();
@@ -55,21 +44,23 @@
             StatusLabel = new Label();
             StatusOutputLabel = new Label();
             LoginGroupBox = new GroupBox();
+            PasswordTxt = new TextBox();
             LogoutBtn = new Button();
             ShowPasswordCheckBox = new CheckBox();
             RememberMeCheckBox = new CheckBox();
             SidePanelMenu.SuspendLayout();
             TopPanelBar.SuspendLayout();
-            ((System.ComponentModel.ISupportInitialize)MinimizeIcon).BeginInit();
-            ((System.ComponentModel.ISupportInitialize)ShutdownIcon).BeginInit();
-            ((System.ComponentModel.ISupportInitialize)pictureBox1).BeginInit();
-            ((System.ComponentModel.ISupportInitialize)pictureBox3).BeginInit();
+            ((ISupportInitialize)MinimizeIcon).BeginInit();
+            ((ISupportInitialize)ShutdownIcon).BeginInit();
+            ((ISupportInitialize)pictureBox1).BeginInit();
+            ((ISupportInitialize)pictureBox3).BeginInit();
             LoginGroupBox.SuspendLayout();
             SuspendLayout();
             // 
             // SidePanelMenu
             // 
             SidePanelMenu.BackColor = Color.FromArgb(30, 30, 30);
+            SidePanelMenu.Controls.Add(CryptoSettingsBtn);
             SidePanelMenu.Controls.Add(SeparatePanel);
             SidePanelMenu.Controls.Add(LoginPanel);
             SidePanelMenu.Controls.Add(RegisterBtn);
@@ -83,6 +74,24 @@
             SidePanelMenu.Name = "SidePanelMenu";
             SidePanelMenu.Size = new Size(206, 514);
             SidePanelMenu.TabIndex = 0;
+            // 
+            // CryptoSettingsBtn
+            // 
+            CryptoSettingsBtn.FlatAppearance.BorderSize = 0;
+            CryptoSettingsBtn.FlatStyle = FlatStyle.Flat;
+            CryptoSettingsBtn.Font = new Font("Century Gothic", 9F, FontStyle.Regular, GraphicsUnit.Point, 0);
+            CryptoSettingsBtn.ForeColor = Color.White;
+            CryptoSettingsBtn.Image = (Image)resources.GetObject("CryptoSettingsBtn.Image");
+            CryptoSettingsBtn.ImageAlign = ContentAlignment.MiddleLeft;
+            CryptoSettingsBtn.Location = new Point(19, 308);
+            CryptoSettingsBtn.Name = "CryptoSettingsBtn";
+            CryptoSettingsBtn.Size = new Size(170, 53);
+            CryptoSettingsBtn.TabIndex = 12;
+            CryptoSettingsBtn.TabStop = false;
+            CryptoSettingsBtn.Text = "     Settings";
+            CryptoSettingsBtn.TextImageRelation = TextImageRelation.ImageBeforeText;
+            CryptoSettingsBtn.UseVisualStyleBackColor = true;
+            CryptoSettingsBtn.Click += CryptoSettingsBtn_Click;
             // 
             // SeparatePanel
             // 
@@ -292,16 +301,7 @@
             UsernameTxt.Name = "UsernameTxt";
             UsernameTxt.Size = new Size(525, 34);
             UsernameTxt.TabIndex = 0;
-            // 
-            // PasswordTxt
-            // 
-            PasswordTxt.BackColor = Color.FromArgb(30, 30, 30);
-            PasswordTxt.ForeColor = Color.White;
-            PasswordTxt.Location = new Point(80, 130);
-            PasswordTxt.Name = "PasswordTxt";
-            PasswordTxt.Size = new Size(525, 34);
-            PasswordTxt.TabIndex = 1;
-            PasswordTxt.UseSystemPasswordChar = true;
+            UsernameTxt.KeyDown += UsernameTxt_KeyDown;
             // 
             // BtnLogin
             // 
@@ -313,7 +313,7 @@
             BtnLogin.Location = new Point(80, 166);
             BtnLogin.Name = "BtnLogin";
             BtnLogin.Size = new Size(525, 42);
-            BtnLogin.TabIndex = 2;
+            BtnLogin.TabIndex = 3;
             BtnLogin.Text = "&Login";
             BtnLogin.UseVisualStyleBackColor = false;
             BtnLogin.Click += BtnLogin_Click;
@@ -322,7 +322,7 @@
             // 
             UsernameLabel.AutoSize = true;
             UsernameLabel.Font = new Font("Century Gothic", 11F, FontStyle.Regular, GraphicsUnit.Point, 0);
-            UsernameLabel.Location = new Point(80, 25);
+            UsernameLabel.Location = new Point(80, 15);
             UsernameLabel.Name = "UsernameLabel";
             UsernameLabel.Size = new Size(121, 25);
             UsernameLabel.TabIndex = 9;
@@ -332,7 +332,7 @@
             // 
             PasswordLabel.AutoSize = true;
             PasswordLabel.Font = new Font("Century Gothic", 11F);
-            PasswordLabel.Location = new Point(75, 102);
+            PasswordLabel.Location = new Point(80, 90);
             PasswordLabel.Name = "PasswordLabel";
             PasswordLabel.Size = new Size(114, 25);
             PasswordLabel.TabIndex = 10;
@@ -382,6 +382,7 @@
             // LoginGroupBox
             // 
             LoginGroupBox.BackColor = Color.FromArgb(30, 30, 30);
+            LoginGroupBox.Controls.Add(PasswordTxt);
             LoginGroupBox.Controls.Add(LogoutBtn);
             LoginGroupBox.Controls.Add(WelcomeLabel);
             LoginGroupBox.Controls.Add(ShowPasswordCheckBox);
@@ -393,7 +394,6 @@
             LoginGroupBox.Controls.Add(PasswordLabel);
             LoginGroupBox.Controls.Add(UsernameLabel);
             LoginGroupBox.Controls.Add(BtnLogin);
-            LoginGroupBox.Controls.Add(PasswordTxt);
             LoginGroupBox.Controls.Add(UsernameTxt);
             LoginGroupBox.Controls.Add(pictureBox3);
             LoginGroupBox.Controls.Add(pictureBox1);
@@ -406,6 +406,17 @@
             LoginGroupBox.TabStop = false;
             LoginGroupBox.Text = "Login";
             // 
+            // PasswordTxt
+            // 
+            PasswordTxt.BackColor = Color.FromArgb(30, 30, 30);
+            PasswordTxt.ForeColor = Color.White;
+            PasswordTxt.Location = new Point(80, 126);
+            PasswordTxt.Name = "PasswordTxt";
+            PasswordTxt.Size = new Size(525, 34);
+            PasswordTxt.TabIndex = 2;
+            PasswordTxt.TextChanged += PasswordTxt_TextChanged;
+            PasswordTxt.KeyDown += PasswordTxt_KeyDown;
+            // 
             // LogoutBtn
             // 
             LogoutBtn.BackColor = Color.FromArgb(30, 30, 30);
@@ -416,7 +427,7 @@
             LogoutBtn.Location = new Point(80, 212);
             LogoutBtn.Name = "LogoutBtn";
             LogoutBtn.Size = new Size(525, 42);
-            LogoutBtn.TabIndex = 3;
+            LogoutBtn.TabIndex = 4;
             LogoutBtn.Text = "&Logout";
             LogoutBtn.UseVisualStyleBackColor = false;
             LogoutBtn.Click += LogoutBtn_Click;
@@ -428,7 +439,7 @@
             ShowPasswordCheckBox.Location = new Point(80, 260);
             ShowPasswordCheckBox.Name = "ShowPasswordCheckBox";
             ShowPasswordCheckBox.Size = new Size(204, 29);
-            ShowPasswordCheckBox.TabIndex = 4;
+            ShowPasswordCheckBox.TabIndex = 5;
             ShowPasswordCheckBox.Text = "Show Password";
             ShowPasswordCheckBox.UseVisualStyleBackColor = true;
             ShowPasswordCheckBox.CheckedChanged += ShowPasswordCheckBox_CheckedChanged;
@@ -440,9 +451,10 @@
             RememberMeCheckBox.Location = new Point(403, 260);
             RememberMeCheckBox.Name = "RememberMeCheckBox";
             RememberMeCheckBox.Size = new Size(202, 29);
-            RememberMeCheckBox.TabIndex = 5;
+            RememberMeCheckBox.TabIndex = 6;
             RememberMeCheckBox.Text = "Remember Me";
             RememberMeCheckBox.UseVisualStyleBackColor = true;
+            RememberMeCheckBox.CheckedChanged += RememberMeCheckBox_CheckedChanged;
             // 
             // PasswordVault
             // 
@@ -467,10 +479,10 @@
             SidePanelMenu.ResumeLayout(false);
             TopPanelBar.ResumeLayout(false);
             TopPanelBar.PerformLayout();
-            ((System.ComponentModel.ISupportInitialize)MinimizeIcon).EndInit();
-            ((System.ComponentModel.ISupportInitialize)ShutdownIcon).EndInit();
-            ((System.ComponentModel.ISupportInitialize)pictureBox1).EndInit();
-            ((System.ComponentModel.ISupportInitialize)pictureBox3).EndInit();
+            ((ISupportInitialize)MinimizeIcon).EndInit();
+            ((ISupportInitialize)ShutdownIcon).EndInit();
+            ((ISupportInitialize)pictureBox1).EndInit();
+            ((ISupportInitialize)pictureBox3).EndInit();
             LoginGroupBox.ResumeLayout(false);
             LoginGroupBox.PerformLayout();
             ResumeLayout(false);
@@ -493,7 +505,6 @@
         private PictureBox pictureBox1;
         private PictureBox pictureBox3;
         private TextBox UsernameTxt;
-        private TextBox PasswordTxt;
         private Button BtnLogin;
         private Label UsernameLabel;
         private Label PasswordLabel;
@@ -507,5 +518,7 @@
         private CheckBox RememberMeCheckBox;
         private Button LogoutBtn;
         private Panel SeparatePanel;
+        private TextBox PasswordTxt;
+        private Button CryptoSettingsBtn;
     }
 }

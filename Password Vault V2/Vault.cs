@@ -57,8 +57,13 @@ public partial class Vault : UserControl
 
                     if (values == null)
                         continue;
-                    for (var i = 0; i < values.Length; i++)
-                        PassVault.Rows[rowIndex].Cells[i].Value = values[i];
+
+                    int index;
+                    for (index = 0; index < values.Length; index++)
+                        PassVault.Rows[rowIndex].Cells[index].Value = values[index];
+
+                    GC.Collect(GC.MaxGeneration, GCCollectionMode.Aggressive, true, true);
+                    GC.WaitForPendingFinalizers();
                 }
             }
             else
@@ -162,8 +167,10 @@ public partial class Vault : UserControl
             decryptedPassword = ProtectedData.Unprotect(Crypto.CryptoConstants.SecurePassword,
                 Crypto.CryptoConstants.SecurePasswordSalt, DataProtectionScope.CurrentUser);
 
+            Crypto.CryptoConstants.SecurePassword = decryptedPassword;
+
             var encryptedVault = await Crypto.EncryptFile(Authentication.CurrentLoggedInUser,
-                decryptedPassword,
+                    Crypto.CryptoConstants.SecurePassword,
                 Authentication.GetUserVault(Authentication.CurrentLoggedInUser));
 
             var encryptedPassword = ProtectedData.Protect(decryptedPassword, Crypto.CryptoConstants.SecurePasswordSalt,
