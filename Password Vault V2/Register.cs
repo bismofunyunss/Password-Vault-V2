@@ -58,7 +58,8 @@ public partial class Register : UserControl
                     {
                         DisableUi();
 
-                        await RegisterAsync(userName, Encoding.UTF8.GetBytes(passTxt.Text), Encoding.UTF8.GetBytes(confirmPassTxt.Text));
+                        await RegisterAsync(userName, Encoding.UTF8.GetBytes(passTxt.Text),
+                            Encoding.UTF8.GetBytes(confirmPassTxt.Text));
                     }
                     else
                     {

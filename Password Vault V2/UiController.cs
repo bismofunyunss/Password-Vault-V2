@@ -23,8 +23,13 @@ public static class UiController
 
                     await Task.Delay(125, token); // Use RainbowLabelToken for delay
                 }
-                catch (Exception)
+                catch (OperationCanceledException)
                 {
+                    // Ignore.
+                }
+                catch (Exception ex)
+                {
+                    ErrorLogging.ErrorLog(ex);
                     return;
                 }
         }
@@ -46,9 +51,12 @@ public static class UiController
                     }
                 }
             }
-            catch (Exception ex) when (ex is not OperationCanceledException)
+            catch (OperationCanceledException)
             {
-                // Handle any errors except for task cancellation
+                // Ignore.
+            }
+            catch (Exception ex)
+            {
                 MessageBox.Show("An error has occurred.", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
                 ErrorLogging.ErrorLog(ex);
             }

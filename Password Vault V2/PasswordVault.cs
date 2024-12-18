@@ -106,7 +106,6 @@ public partial class PasswordVault : Form
         {
             Crypto.CryptoUtilities.ClearMemory(passwordBytesArray);
             ErrorLogging.ErrorLog(ex);
-
             await _vars.TokenSource.CancelAsync();
 
             if (_vars.TokenSource.IsCancellationRequested)

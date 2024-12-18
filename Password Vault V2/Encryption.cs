@@ -176,6 +176,10 @@ public partial class Encryption : UserControl
             FileOutputLbl.Text = "Idle...";
             FileOutputLbl.ForeColor = Color.WhiteSmoke;
         }
+        catch (OperationCanceledException ex)
+        {
+            ErrorLogging.ErrorLog(ex);
+        }
         catch (Exception ex)
         {
             if (CustomPasswordTextBox.Text != string.Empty)

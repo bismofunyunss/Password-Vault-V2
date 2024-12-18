@@ -137,9 +137,6 @@ public partial class Vault : UserControl
             if (Authentication.CurrentLoggedInUser == string.Empty)
                 throw new Exception("No user is currently logged in.");
 
-            if (_tokenSource.IsCancellationRequested)
-                _tokenSource = new CancellationTokenSource();
-
             StartAnimation();
             DisableUi();
 
@@ -202,10 +199,10 @@ public partial class Vault : UserControl
         catch (Exception ex)
         {
             Crypto.CryptoUtilities.ClearMemory(decryptedPassword);
+            await _tokenSource.CancelAsync();
+
             if (_tokenSource.IsCancellationRequested)
                 _tokenSource = new CancellationTokenSource();
-
-            await _tokenSource.CancelAsync();
 
             EnableUi();
             MessageBox.Show(ex.Message, "Error", MessageBoxButtons.OK,
@@ -217,10 +214,9 @@ public partial class Vault : UserControl
         }
         finally
         {
+            await _tokenSource.CancelAsync();
             if (_tokenSource.IsCancellationRequested)
                 _tokenSource = new CancellationTokenSource();
-
-            await _tokenSource.CancelAsync();
 
             Crypto.CryptoUtilities.ClearMemory(decryptedPassword);
             handle.Free();

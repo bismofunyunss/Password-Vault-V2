@@ -37,12 +37,14 @@ public partial class CryptoSettings : UserControl
             Settings.Default.Save();
 
             await Task.Delay(3000, Token);
+            await _tokenSource.CancelAsync();
+
             if (_tokenSource.IsCancellationRequested)
                 _tokenSource = new CancellationTokenSource();
-            await _tokenSource.CancelAsync();
             outputLbl.ForeColor = Color.LimeGreen;
             outputLbl.Text = @"Saved Successfully";
-            MessageBox.Show("Settings saved successfully.", "Success", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            MessageBox.Show("Settings saved successfully.", "Success", MessageBoxButtons.OK,
+                MessageBoxIcon.Information);
             outputLbl.ForeColor = Color.WhiteSmoke;
             outputLbl.Text = @"Idle...";
         }
