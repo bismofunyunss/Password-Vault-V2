@@ -1,7 +1,7 @@
-﻿using System.Runtime.InteropServices;
-using System.Diagnostics;
+﻿using System.Diagnostics;
+using System.Runtime.InteropServices;
 
-namespace Secure_Password_Vault
+namespace Password_Vault_V2
 {
     public static class AntiTamper
     {
@@ -133,34 +133,34 @@ namespace Secure_Password_Vault
         {
             return await Task.Run(() =>
             {
-                    if (CheckDebuggerManagedPresent())
-                        return true;
+                if (CheckDebuggerManagedPresent())
+                    return true;
 
-                    if (CheckDebuggerUnmanagedPresent())
-                        return true;
+                if (CheckDebuggerUnmanagedPresent())
+                    return true;
 
-                    if (CheckRemoteDebugger())
-                        return true;
+                if (CheckRemoteDebugger())
+                    return true;
 
-                    if (CheckProcessList())
-                        return true;
+                if (CheckProcessList())
+                    return true;
 
-                    if (AntiDebugAttach())
-                        return true;
+                if (AntiDebugAttach())
+                    return true;
 
-                    if (HideThreadsAntiDebug())
-                        return true;
+                if (HideThreadsAntiDebug())
+                    return true;
 
-                    if (PatchLoadLibraryA())
-                        return true;
+                if (PatchLoadLibraryA())
+                    return true;
 
-                    if (PatchLoadLibraryW())
-                        return true;
+                if (PatchLoadLibraryW())
+                    return true;
 
-                    if (DetectBadInstructionsOnCommonAntiDebuggingFunctions())
-                        return true;
+                if (DetectBadInstructionsOnCommonAntiDebuggingFunctions())
+                    return true;
 
-                    return false;
+                return false;
             });
         }
 
@@ -493,7 +493,7 @@ namespace Secure_Password_Vault
                                 }
                                 catch
                                 {
-                                    continue;
+                                    // ignored
                                 }
                             }
                             break;

@@ -157,6 +157,7 @@ public partial class Register : UserControl
 
         await File.WriteAllTextAsync(userFile, DataConversionHelpers.ByteArrayToBase64String(encrypted));
 
+        Crypto.CryptoUtilities.ClearMemory(encrypted);
         Crypto.CryptoUtilities.ClearMemory(hashedPassword);
 
         outputLbl.Text = "Account created";

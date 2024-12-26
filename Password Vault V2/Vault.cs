@@ -185,6 +185,9 @@ public partial class Vault : UserControl
             await File.WriteAllTextAsync(Authentication.GetUserVault(Authentication.CurrentLoggedInUser),
                 encryptedVaultString);
 
+            Crypto.CryptoUtilities.ClearMemory(encryptedVault);
+            Crypto.CryptoUtilities.ClearMemory(encryptedVaultString);
+
             GC.Collect(GC.MaxGeneration, GCCollectionMode.Aggressive, true, true);
 
             outputLbl.Text = "Vault saved successfully";

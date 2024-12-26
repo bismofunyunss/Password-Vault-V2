@@ -60,9 +60,9 @@ public static partial class Crypto
         var (key, key2, key3, key4, key5, hMacKey, hMacKey2, hMacKey3) = BufferInit.InitBuffers(bytes);
 
         var compressedText = await CryptoUtilities.CompressText(fileBytes);
-        var encryptedFile = EncryptionDecryption.EncryptV3(ref compressedText, ref key, ref key2, ref key3, ref key4,
-            ref key5, ref hMacKey,
-            ref hMacKey2, ref hMacKey3);
+        var encryptedFile = EncryptionDecryption.EncryptV3( compressedText, key, key2, key3, key4,
+            key5, hMacKey,
+            hMacKey2, hMacKey3);
 
         var arrays = new[]
         {
@@ -115,8 +115,8 @@ public static partial class Crypto
             throw new ArgumentException("Value was empty.");
 
         var decryptedFile =
-            EncryptionDecryption.DecryptV3(ref fileBytes, ref key, ref key2, ref key3, ref key4, ref key5, ref hMacKey,
-                ref hMacKey2, ref hMacKey3);
+            EncryptionDecryption.DecryptV3(fileBytes, key, key2, key3, key4, key5, hMacKey,
+                hMacKey2, hMacKey3);
         var decompressedText = await CryptoUtilities.DecompressText(decryptedFile);
 
         var arrays = new[]
@@ -128,25 +128,25 @@ public static partial class Crypto
         return decompressedText;
     }
 
-    public static async Task<byte[]> EncryptNonTxt(string userName, string inputFile, byte[] passWord)
+    public static async Task<byte[]> EncryptNonTxt(string userName, string inputString, byte[] passWord, CancellationToken token)
     {
         if (string.IsNullOrEmpty(userName))
             throw new ArgumentException("Value was empty.", nameof(userName));
         if (passWord.Length == 0)
             throw new ArgumentException("Value was empty.", nameof(passWord));
-        if (string.IsNullOrEmpty(inputFile))
-            throw new ArgumentException("Value was empty.", nameof(inputFile));
 
         var salt = Authentication.GetUserSalt(userName);
 
         var bytes = await HashingMethods.Argon2Id(passWord, salt, 544);
         var (key, key2, key3, key4, key5, hMacKey, hMacKey2, hMacKey3) = BufferInit.InitBuffers(bytes);
-        var fileBytes = await File.ReadAllBytesAsync(inputFile);
+        var fileBytes = await File.ReadAllBytesAsync(inputString, token);
         var encryptedFile = Array.Empty<byte>();
+
+
         try
         {
-            encryptedFile = EncryptionDecryption.EncryptV3(ref fileBytes, ref key, ref key2, ref key3, ref key4,
-                ref key5, ref hMacKey, ref hMacKey2, ref hMacKey3);
+            encryptedFile = EncryptionDecryption.EncryptV3(fileBytes, key, key2, key3, key4,
+                key5, hMacKey, hMacKey2, hMacKey3);
         }
         catch (Exception ex)
         {
@@ -162,7 +162,7 @@ public static partial class Crypto
         return encryptedFile;
     }
 
-    public static async Task<byte[]> DecryptNonTxt(string userName, string inputFile, byte[] passWord)
+    public static async Task<byte[]> DecryptNonTxt(string userName, string inputFile, byte[] passWord, CancellationToken token)
     {
         if (string.IsNullOrEmpty(userName))
             throw new ArgumentException("Value was empty.", nameof(userName));
@@ -175,12 +175,12 @@ public static partial class Crypto
 
         var bytes = await HashingMethods.Argon2Id(passWord, salt, 544);
         var (key, key2, key3, key4, key5, hMacKey, hMacKey2, hMacKey3) = BufferInit.InitBuffers(bytes);
-        var fileBytes = await File.ReadAllBytesAsync(inputFile);
+        var fileBytes = await File.ReadAllBytesAsync(inputFile, token);
         var decryptedFile = Array.Empty<byte>();
         try
         {
-            decryptedFile = EncryptionDecryption.DecryptV3(ref fileBytes, ref key, ref key2, ref key3, ref key4,
-                ref key5, ref hMacKey, ref hMacKey2, ref hMacKey3);
+            decryptedFile = EncryptionDecryption.DecryptV3(fileBytes, key, key2, key3, key4,
+                key5, hMacKey, hMacKey2, hMacKey3);
         }
         catch (Exception ex)
         {
@@ -492,7 +492,7 @@ public static partial class Crypto
         /// </remarks>
         /// <param name="arrays">The byte arrays containing sensitive information to be cleared.</param>
         /// <exception cref="ArgumentNullException">Thrown if any of the input arrays is null.</exception>
-        public static void ClearMemory(byte[][] arrays)
+        public static void ClearMemory(params byte[][] arrays)
         {
             if (arrays == null)
                 throw new ArgumentNullException(nameof(arrays), "Input cannot be null.");
@@ -647,6 +647,24 @@ public static partial class Crypto
             }
         }
 
+        public static void ClearMemory(string str)
+        {
+            var handle = GCHandle.Alloc(str, GCHandleType.Pinned);
+
+            try
+            {
+                Memset.MemSet(handle.AddrOfPinnedObject(), 0, str.Length * 2);
+            }
+            catch (AccessViolationException ex)
+            {
+                ErrorLogging.ErrorLog(ex);
+                MessageBox.Show(ex.Message, "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
+            finally
+            {
+                handle.Free();
+            }
+        }
         /// <summary>
         ///     Clears the sensitive information stored in one or more pointers securely.
         /// </summary>
@@ -804,7 +822,7 @@ public static partial class Crypto
     /// <summary>
     ///     A class that contains different algorithms for encrypting and decrypting.
     /// </summary>
-    private static class Algorithms
+    public class Algorithms
     {
         /// <summary>
         ///     Generates an array of random indices for shuffling based on a given size and key.
@@ -1277,10 +1295,10 @@ public static partial class Crypto
         /// <returns>A shuffled byte array containing nonces and the final encrypted result.</returns>
         /// <exception cref="ArgumentException">Thrown when any of the input parameters is an empty array.</exception>
         /// <exception cref="Exception">Thrown when any intermediate or final encrypted value is empty.</exception>
-        public static byte[] EncryptV3(ref byte[] plaintext,
-            ref byte[] key, ref byte[] key2, ref byte[] key3, ref byte[] key4, ref byte[] key5, ref byte[] hMacKey,
-            ref byte[] hMacKey2,
-            ref byte[] hMacKey3)
+        public static byte[] EncryptV3(byte[] plaintext,
+            byte[] key, byte[] key2, byte[] key3, byte[] key4, byte[] key5, byte[] hMacKey,
+            byte[] hMacKey2,
+            byte[] hMacKey3)
         {
             if (plaintext == Array.Empty<byte>())
                 throw new ArgumentException("Value was empty.", nameof(plaintext));
@@ -1336,10 +1354,10 @@ public static partial class Crypto
         /// <returns>The decrypted byte array.</returns>
         /// <exception cref="ArgumentException">Thrown when any of the input parameters is an empty array.</exception>
         /// <exception cref="Exception">Thrown when any intermediate or final decrypted value is empty.</exception>
-        public static byte[] DecryptV3(ref byte[] cipherText,
-            ref byte[] key, ref byte[] key2, ref byte[] key3, ref byte[] key4, ref byte[] key5, ref byte[] hMacKey,
-            ref byte[] hMacKey2,
-            ref byte[] hMacKey3)
+        public static byte[] DecryptV3(byte[] cipherText, 
+            byte[] key, byte[] key2, byte[] key3, byte[] key4, byte[] key5, byte[] hMacKey, 
+            byte[] hMacKey2, 
+            byte[] hMacKey3)
         {
             if (cipherText == Array.Empty<byte>())
                 throw new ArgumentException("Value was empty.", nameof(cipherText));

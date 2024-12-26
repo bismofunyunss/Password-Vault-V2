@@ -1,13 +1,22 @@
-﻿using System.Runtime.InteropServices;
+﻿using System.IO;
+using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text;
+using System.Windows.Forms;
+
 
 namespace Password_Vault_V2;
 
 public partial class Encryption : UserControl
 {
-    private static CancellationTokenSource _tokenSource = new();
-    private static readonly CancellationToken Token = _tokenSource.Token;
+    private static CancellationTokenSource _encryptAnimationSource = new();
+    private static readonly CancellationToken EncryptAnimationToken = _encryptAnimationSource.Token;
+    private static CancellationTokenSource _decryptAnimationSource = new();
+    private static readonly CancellationToken DecryptAnimationToken = _decryptAnimationSource.Token;
+    private static CancellationTokenSource _encryptTokenSource = new();
+    private static readonly CancellationToken EncryptToken = _encryptTokenSource.Token;
+    private static CancellationTokenSource _decryptTokenSource = new();
+    private static readonly CancellationToken DecryptToken = _decryptTokenSource.Token;
 
     public Encryption()
     {
@@ -33,189 +42,13 @@ public partial class Encryption : UserControl
 
     private async void DecryptingAnimation()
     {
-        await UiController.Animations.AnimateLabel(FileOutputLbl, "Decrypting file", Token);
+        await UiController.Animations.AnimateLabel(FileOutputLbl, "Decrypting file", DecryptAnimationToken);
     }
 
     private async void EncryptingAnimation()
     {
-        await UiController.Animations.AnimateLabel(FileOutputLbl, "Encrypting file", Token);
+        await UiController.Animations.AnimateLabel(FileOutputLbl, "Encrypting file", EncryptAnimationToken);
     }
-
-    private async void ExportFileBtn_Click(object sender, EventArgs e)
-    {
-        try
-        {
-            if (Authentication.CurrentLoggedInUser == string.Empty)
-                throw new Exception("No user is currently logged in.");
-
-            if (!FileProcessingConstants.FileOpened)
-                throw new Exception("No file is opened.");
-
-            using var saveFileDialog = new SaveFileDialog();
-            saveFileDialog.Filter = $"Encrypted Files (*.encrypted)|*.encrypted|{FileProcessingConstants.FileExtension.ToUpper()}" +
-                $" Files (*.{FileProcessingConstants.FileExtension})|*.{FileProcessingConstants.FileExtension}";
-            saveFileDialog.FilterIndex = 1;
-            saveFileDialog.ShowHiddenFiles = true;
-            saveFileDialog.CheckFileExists = false;
-            saveFileDialog.CheckPathExists = false;
-            saveFileDialog.RestoreDirectory = true;
-            saveFileDialog.InitialDirectory =
-                Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments));
-
-            if (saveFileDialog.ShowDialog() != DialogResult.OK)
-                return;
-
-            var selectedFileName = saveFileDialog.FileName;
-
-            if (FileProcessingConstants.Result.Length == 0)
-                return;
-
-            await using (var fs = new FileStream(selectedFileName, FileMode.OpenOrCreate, FileAccess.Write))
-            {
-                var fileBytes = FileProcessingConstants.Result;
-                await fs.WriteAsync(fileBytes, 0, fileBytes.Length);
-            }
-
-            FileOutputLbl.Text = "File saved successfully.";
-            FileOutputLbl.ForeColor = Color.LimeGreen;
-            MessageBox.Show("File saved successfully.", "Saved successfully", MessageBoxButtons.OK,
-                MessageBoxIcon.Information);
-
-            FileProcessingConstants.Result = [];
-
-            FileOutputLbl.Text = "Idle...";
-            FileOutputLbl.ForeColor = Color.WhiteSmoke;
-        }
-        catch (Exception ex)
-        {
-            FileOutputLbl.Text = "Error saving file.";
-            FileOutputLbl.ForeColor = Color.Red;
-            ErrorLogging.ErrorLog(ex);
-            MessageBox.Show(ex.Message, "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
-            FileOutputLbl.Text = "Idle...";
-            FileOutputLbl.ForeColor = Color.WhiteSmoke;
-        }
-    }
-
-    private async void DecryptBtn_Click(object sender, EventArgs e)
-    {
-        var handle = GCHandle.Alloc(FileProcessingConstants.PasswordArray, GCHandleType.Pinned);
-        byte[] customPassword = [];
-        byte[] confirmPassword = [];
-
-        try
-        {
-            MessageBox.Show(
-                "Do NOT close the program while loading. This may cause corrupted data that is NOT recoverable. " +
-                "If using a custom password to encrypt with, MAKE SURE YOU REMEMBER THE PASSWORD! You will NOT be able to " +
-                "decrypt the file without the password. It is separate than the password you use to login with.",
-                "Info",
-                MessageBoxButtons.OK, MessageBoxIcon.Exclamation);
-
-            if (Authentication.CurrentLoggedInUser == string.Empty)
-                throw new Exception("No user is currently logged in.");
-
-            if (!FileProcessingConstants.FileOpened)
-                throw new Exception("No file is opened.");
-
-            if (FileProcessingConstants.LoadedFile == string.Empty)
-                return;
-
-            DecryptingAnimation();
-
-            FileProcessingConstants.PasswordArray = ProtectedData.Unprotect(Crypto.CryptoConstants.SecurePassword,
-                Crypto.CryptoConstants.SecurePasswordSalt, DataProtectionScope.CurrentUser);
-
-            if (CustomPasswordCheckBox.Checked)
-            {
-                customPassword = Encoding.UTF8.GetBytes(CustomPasswordTextBox.Text);
-                confirmPassword = Encoding.UTF8.GetBytes(ConfirmPassword.Text);
-
-                if (!customPassword.SequenceEqual(confirmPassword))
-                    throw new Exception("Both passwords must match.");
-
-                FileProcessingConstants.PasswordArray = customPassword;
-            }
-            
-            var decryptedFile =
-                await Crypto.DecryptNonTxt(Authentication.CurrentLoggedInUser, FileProcessingConstants.LoadedFile,
-                    FileProcessingConstants.PasswordArray);
-
-            var encryptedPassword = ProtectedData.Protect(FileProcessingConstants.PasswordArray, Crypto.CryptoConstants.SecurePasswordSalt,
-    DataProtectionScope.CurrentUser);
-
-            Crypto.CryptoConstants.SecurePassword = encryptedPassword;
-
-            if (decryptedFile == Array.Empty<byte>())
-                throw new Exception("There was an error while decrypting.");
-
-            FileProcessingConstants.Result = decryptedFile;
-
-            GC.Collect(GC.MaxGeneration, GCCollectionMode.Aggressive, true, true);
-
-            FileOutputLbl.Text = "File decrypted.";
-            FileOutputLbl.ForeColor = Color.LimeGreen;
-
-            if (_tokenSource.IsCancellationRequested)
-                _tokenSource = new CancellationTokenSource();
-
-            await _tokenSource.CancelAsync();
-            Crypto.CryptoUtilities.ClearMemory(FileProcessingConstants.DecryptedPassword);
-
-            MessageBox.Show(
-                "File was decrypted successfully. Don't forget to export the file and change the extension to the original one.",
-                "Success", MessageBoxButtons.OK,
-                MessageBoxIcon.Information);
-
-            GC.Collect(GC.MaxGeneration, GCCollectionMode.Aggressive, true, true);
-
-            var size = (long)FileProcessingConstants.Result.Length;
-            var fileSize = size.ToString("#,0");
-            FileSizeNumLbl.Text = $"{fileSize} bytes";
-
-            FileOutputLbl.Text = "Idle...";
-            FileOutputLbl.ForeColor = Color.WhiteSmoke;
-        }
-        catch (OperationCanceledException ex)
-        {
-            ErrorLogging.ErrorLog(ex);
-        }
-        catch (Exception ex)
-        {
-            if (CustomPasswordTextBox.Text != string.Empty)
-            {
-                CustomPasswordTextBox.Clear();
-                ConfirmPassword.Clear();
-            }
-
-            var arrays = new[]
-            {
-                customPassword, confirmPassword, FileProcessingConstants.PasswordArray, FileProcessingConstants.DecryptedPassword
-            };
-            Crypto.CryptoUtilities.ClearMemory(arrays);
-
-            FileOutputLbl.Text = "Error encrypting file.";
-            FileOutputLbl.ForeColor = Color.Red;
-            if (_tokenSource.IsCancellationRequested)
-                _tokenSource = new CancellationTokenSource();
-
-            await _tokenSource.CancelAsync();
-            MessageBox.Show(ex.Message, "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
-            FileOutputLbl.Text = "Idle...";
-            FileOutputLbl.ForeColor = Color.WhiteSmoke;
-            ErrorLogging.ErrorLog(ex);
-        }
-        finally
-        {
-            handle.Free();
-            var arrays = new[]
-            {
-                customPassword, confirmPassword, FileProcessingConstants.PasswordArray, FileProcessingConstants.DecryptedPassword
-            };
-            Crypto.CryptoUtilities.ClearMemory(arrays);
-        }
-    }
-
     private void ImportFileBtn_Click(object sender, EventArgs e)
     {
         try
@@ -225,7 +58,7 @@ public partial class Encryption : UserControl
 
             using var openFileDialog = new OpenFileDialog();
             openFileDialog.Filter = "All Files(*.*) | *.*";
-            openFileDialog.Title = "Select a file to encrypt.";
+            openFileDialog.Title = "Select a file to encrypt/decrypt.";
             openFileDialog.FilterIndex = 1;
             openFileDialog.ShowHiddenFiles = true;
             openFileDialog.CheckFileExists = true;
@@ -267,7 +100,6 @@ public partial class Encryption : UserControl
 
             FileOutputLbl.Text = "Idle...";
             FileOutputLbl.ForeColor = Color.WhiteSmoke;
-            FileProcessingConstants.Result = [];
         }
         catch (AccessViolationException ex)
         {
@@ -277,6 +109,7 @@ public partial class Encryption : UserControl
             FileOutputLbl.ForeColor = Color.Red;
             FileOutputLbl.Text = "Idle...";
             FileOutputLbl.ForeColor = Color.WhiteSmoke;
+            FileProcessingConstants.Result = [];
             ErrorLogging.ErrorLog(ex);
         }
         catch (Exception ex)
@@ -287,11 +120,70 @@ public partial class Encryption : UserControl
             FileOutputLbl.ForeColor = Color.Red;
             FileOutputLbl.Text = "Idle...";
             FileOutputLbl.ForeColor = Color.WhiteSmoke;
+            FileProcessingConstants.Result = [];
             ErrorLogging.ErrorLog(ex);
         }
     }
+    private async void ExportFileBtn_Click(object sender, EventArgs e)
+    {
+        try
+        {
+            if (Authentication.CurrentLoggedInUser == string.Empty)
+                throw new Exception("No user is currently logged in.");
 
-    private async void EncryptBtn_Click(object sender, EventArgs e)
+            if (!FileProcessingConstants.FileOpened)
+                throw new Exception("No file is opened.");
+
+            using var saveFileDialog = new SaveFileDialog();
+            saveFileDialog.Filter = $"Encrypted Files (*.encrypted)|*.encrypted|{FileProcessingConstants.FileExtension.ToLower()}" +
+                $" Files (*.{FileProcessingConstants.FileExtension})|*.{FileProcessingConstants.FileExtension}";
+            saveFileDialog.FilterIndex = 1;
+            saveFileDialog.ShowHiddenFiles = true;
+            saveFileDialog.CheckFileExists = false;
+            saveFileDialog.CheckPathExists = false;
+            saveFileDialog.RestoreDirectory = true;
+            saveFileDialog.InitialDirectory =
+                Environment.GetFolderPath(Environment.SpecialFolder.Desktop);
+
+            if (saveFileDialog.ShowDialog() != DialogResult.OK)
+                return;
+
+            var selectedFileName = saveFileDialog.FileName;
+
+            if (FileProcessingConstants.Result.Length == 0)
+                return;
+
+
+            await using (var fs = new FileStream(selectedFileName, FileMode.OpenOrCreate, FileAccess.Write))
+            {
+                var fileBytes = FileProcessingConstants.Result;
+                await fs.WriteAsync(fileBytes, 0, fileBytes.Length);
+                fs.Close();
+            }
+
+            FileOutputLbl.Text = "File saved successfully.";
+            FileOutputLbl.ForeColor = Color.LimeGreen;
+            MessageBox.Show("File saved successfully.", "Saved successfully", MessageBoxButtons.OK,
+                MessageBoxIcon.Information);
+
+            FileProcessingConstants.FileOpened = false;
+
+            FileSizeNumLbl.Text = $"0 bytes";
+            FileOutputLbl.Text = "Idle...";
+            FileOutputLbl.ForeColor = Color.WhiteSmoke;
+        }
+        catch (Exception ex)
+        {
+            FileOutputLbl.Text = "Error saving file.";
+            FileOutputLbl.ForeColor = Color.Red;
+            ErrorLogging.ErrorLog(ex);
+            MessageBox.Show(ex.Message, "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            FileOutputLbl.Text = "Idle...";
+            FileOutputLbl.ForeColor = Color.WhiteSmoke;
+        }
+    }
+
+    private async void DecryptBtn_Click(object sender, EventArgs e)
     {
         var handle = GCHandle.Alloc(FileProcessingConstants.PasswordArray, GCHandleType.Pinned);
         byte[] customPassword = [];
@@ -300,11 +192,11 @@ public partial class Encryption : UserControl
         try
         {
             MessageBox.Show(
-            "Do NOT close the program while loading. This may cause corrupted data that is NOT recoverable. " +
-            "If using a custom password to encrypt with, MAKE SURE YOU REMEMBER THE PASSWORD! You will NOT be able to " +
-            "decrypt the file without the password. It is separate than the password you use to login with.",
-            "Info",
-            MessageBoxButtons.OK, MessageBoxIcon.Exclamation);
+                "Do NOT close the program while loading. This may cause corrupted data that is NOT recoverable. " +
+                "If using a custom password to encrypt with, MAKE SURE YOU REMEMBER THE PASSWORD! You will NOT be able to " +
+                "decrypt the file without the password. It is separate than the password you use to login with.",
+                "Info",
+                MessageBoxButtons.OK, MessageBoxIcon.Exclamation);
 
             if (Authentication.CurrentLoggedInUser == string.Empty)
                 throw new Exception("No user is currently logged in.");
@@ -315,15 +207,10 @@ public partial class Encryption : UserControl
             if (FileProcessingConstants.LoadedFile == string.Empty)
                 return;
 
-            if (_tokenSource.IsCancellationRequested)
-                _tokenSource = new CancellationTokenSource();
+            DecryptingAnimation();
 
-            EncryptingAnimation();
-
-            FileProcessingConstants.DecryptedPassword = ProtectedData.Unprotect(FileProcessingConstants.PasswordArray,
-     Crypto.CryptoConstants.SecurePasswordSalt, DataProtectionScope.CurrentUser);
-
-            FileProcessingConstants.PasswordArray = FileProcessingConstants.DecryptedPassword;
+            FileProcessingConstants.PasswordArray = ProtectedData.Unprotect(FileProcessingConstants.PasswordArray,
+                Crypto.CryptoConstants.SecurePasswordSalt, DataProtectionScope.CurrentUser);
 
             if (CustomPasswordCheckBox.Checked)
             {
@@ -336,34 +223,35 @@ public partial class Encryption : UserControl
                 FileProcessingConstants.PasswordArray = customPassword;
             }
 
+            var decryptedFile =
+                await Task.Run(() => Crypto.DecryptNonTxt(Authentication.CurrentLoggedInUser, FileProcessingConstants.LoadedFile,
+                    FileProcessingConstants.PasswordArray, DecryptToken));
 
-            var encryptedFile =
-                await Crypto.EncryptNonTxt(Authentication.CurrentLoggedInUser, FileProcessingConstants.LoadedFile,
-                    FileProcessingConstants.PasswordArray);
+            await _decryptTokenSource.CancelAsync();
 
-            FileProcessingConstants.EncryptedPassword = ProtectedData.Protect(FileProcessingConstants.DecryptedPassword, Crypto.CryptoConstants.SecurePasswordSalt,
-DataProtectionScope.CurrentUser);
+            if (_decryptTokenSource.IsCancellationRequested)
+                _decryptTokenSource = new CancellationTokenSource();
 
-            FileProcessingConstants.PasswordArray = FileProcessingConstants.EncryptedPassword;
+            FileProcessingConstants.PasswordArray = ProtectedData.Protect(FileProcessingConstants.PasswordArray, Crypto.CryptoConstants.SecurePasswordSalt,
+    DataProtectionScope.CurrentUser);
 
-            if (encryptedFile == Array.Empty<byte>())
+            if (decryptedFile == Array.Empty<byte>())
                 throw new Exception("There was an error while decrypting.");
 
-            GC.Collect(GC.MaxGeneration, GCCollectionMode.Aggressive, true, true);
+            FileProcessingConstants.Result = decryptedFile;
 
-            FileProcessingConstants.Result = encryptedFile;
+            await _decryptAnimationSource.CancelAsync();
 
-            FileOutputLbl.Text = "File encrypted.";
+            if (_decryptAnimationSource.IsCancellationRequested)
+                _decryptAnimationSource = new CancellationTokenSource();
+
+            FileOutputLbl.Text = "File decrypted.";
             FileOutputLbl.ForeColor = Color.LimeGreen;
 
-            if (_tokenSource.IsCancellationRequested)
-                _tokenSource = new CancellationTokenSource();
-
-            await _tokenSource.CancelAsync();
             Crypto.CryptoUtilities.ClearMemory(FileProcessingConstants.DecryptedPassword);
 
             MessageBox.Show(
-                "File was encrypted successfully. You MUST export the file and import it again to decrypt it.",
+                "File was decrypted successfully. Don't forget to export the file and change the extension to the original one.",
                 "Success", MessageBoxButtons.OK,
                 MessageBoxIcon.Information);
 
@@ -375,6 +263,10 @@ DataProtectionScope.CurrentUser);
 
             FileOutputLbl.Text = "Idle...";
             FileOutputLbl.ForeColor = Color.WhiteSmoke;
+        }
+        catch (OperationCanceledException)
+        {
+            // Ignore.
         }
         catch (Exception ex)
         {
@@ -392,10 +284,12 @@ DataProtectionScope.CurrentUser);
 
             FileOutputLbl.Text = "Error encrypting file.";
             FileOutputLbl.ForeColor = Color.Red;
-            if (_tokenSource.IsCancellationRequested)
-                _tokenSource = new CancellationTokenSource();
 
-            await _tokenSource.CancelAsync();
+            await _encryptAnimationSource.CancelAsync();
+
+            if (_encryptAnimationSource.IsCancellationRequested)
+                _encryptAnimationSource = new CancellationTokenSource();
+
             MessageBox.Show(ex.Message, "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
             FileOutputLbl.Text = "Idle...";
             FileOutputLbl.ForeColor = Color.WhiteSmoke;
@@ -406,12 +300,134 @@ DataProtectionScope.CurrentUser);
             handle.Free();
             var arrays = new[]
             {
-                customPassword, confirmPassword, FileProcessingConstants.PasswordArray, FileProcessingConstants.DecryptedPassword
+                customPassword, confirmPassword, FileProcessingConstants.DecryptedPassword
             };
             Crypto.CryptoUtilities.ClearMemory(arrays);
         }
     }
 
+    private async void EncryptBtn_Click(object sender, EventArgs e)
+    {
+        var handle = GCHandle.Alloc(FileProcessingConstants.PasswordArray, GCHandleType.Pinned);
+        byte[] customPassword = [];
+        byte[] confirmPassword = [];
+
+        try
+        {
+            
+            MessageBox.Show(
+                "Do NOT close the program while loading. This may cause corrupted data that is NOT recoverable. " +
+                "If using a custom password to encrypt with, MAKE SURE YOU REMEMBER THE PASSWORD! You will NOT be able to " +
+                "decrypt the file without the password. It is separate than the password you use to login with.",
+                "Info",
+                MessageBoxButtons.OK, MessageBoxIcon.Exclamation);
+
+            if (Authentication.CurrentLoggedInUser == string.Empty)
+                throw new Exception("No user is currently logged in.");
+
+            if (!FileProcessingConstants.FileOpened)
+                throw new Exception("No file is opened.");
+
+            if (FileProcessingConstants.LoadedFile == string.Empty)
+                return;
+
+            EncryptingAnimation();
+
+            FileProcessingConstants.PasswordArray = ProtectedData.Unprotect(FileProcessingConstants.PasswordArray,
+                Crypto.CryptoConstants.SecurePasswordSalt, DataProtectionScope.CurrentUser);
+
+            if (CustomPasswordCheckBox.Checked)
+            {
+                customPassword = Encoding.UTF8.GetBytes(CustomPasswordTextBox.Text);
+                confirmPassword = Encoding.UTF8.GetBytes(ConfirmPassword.Text);
+
+                if (!customPassword.SequenceEqual(confirmPassword))
+                    throw new Exception("Both passwords must match.");
+
+                FileProcessingConstants.PasswordArray = customPassword;
+            }
+
+            var encryptedFile =
+                await Task.Run(() => Crypto.EncryptNonTxt(Authentication.CurrentLoggedInUser, FileProcessingConstants.LoadedFile,
+                    FileProcessingConstants.PasswordArray, EncryptToken));
+
+            await _encryptTokenSource.CancelAsync();
+
+            if (_encryptTokenSource.IsCancellationRequested)
+                _encryptTokenSource = new CancellationTokenSource();
+
+            FileProcessingConstants.PasswordArray = ProtectedData.Protect(FileProcessingConstants.PasswordArray,
+                Crypto.CryptoConstants.SecurePasswordSalt,
+                DataProtectionScope.CurrentUser);
+
+            if (encryptedFile == Array.Empty<byte>())
+                throw new Exception("There was an error while decrypting.");
+
+            await _encryptAnimationSource.CancelAsync();
+
+            if (_encryptAnimationSource.IsCancellationRequested)
+                _encryptAnimationSource = new CancellationTokenSource();
+
+            FileProcessingConstants.Result = encryptedFile;
+
+            FileOutputLbl.Text = "File encrypted.";
+            FileOutputLbl.ForeColor = Color.LimeGreen;
+           
+            MessageBox.Show(
+                "File was encrypted successfully. You may now export the encrypted file. To decrypt, you will open the encrypted file.",
+                "Success", MessageBoxButtons.OK,
+                MessageBoxIcon.Information);
+
+            GC.Collect(GC.MaxGeneration, GCCollectionMode.Aggressive, true, true);
+
+            var size = (long)FileProcessingConstants.Result.Length;
+            var fileSize = size.ToString("#,0");
+            FileSizeNumLbl.Text = $"{fileSize} bytes";
+
+            FileOutputLbl.Text = "Idle...";
+            FileOutputLbl.ForeColor = Color.WhiteSmoke;
+        }
+        catch (OperationCanceledException)
+        {
+            // Ignore.
+        }
+        catch (Exception ex)
+        {
+            if (CustomPasswordTextBox.Text != string.Empty)
+            {
+                CustomPasswordTextBox.Clear();
+                ConfirmPassword.Clear();
+            }
+
+            var arrays = new[]
+            {
+                customPassword, confirmPassword, FileProcessingConstants.PasswordArray, FileProcessingConstants.DecryptedPassword
+            };
+            Crypto.CryptoUtilities.ClearMemory(arrays);
+
+            await _encryptAnimationSource.CancelAsync();
+
+            if (_encryptAnimationSource.IsCancellationRequested)
+                _encryptAnimationSource = new CancellationTokenSource();
+
+            FileOutputLbl.Text = "Error encrypting file.";
+            FileOutputLbl.ForeColor = Color.Red;
+
+            MessageBox.Show(ex.Message, "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            FileOutputLbl.Text = "Idle...";
+            FileOutputLbl.ForeColor = Color.WhiteSmoke;
+            ErrorLogging.ErrorLog(ex);
+        }
+        finally
+        {
+            handle.Free();
+            var arrays = new[]
+            {
+                customPassword, confirmPassword, FileProcessingConstants.DecryptedPassword
+            };
+            Crypto.CryptoUtilities.ClearMemory(arrays);
+        }
+    }
     private void CustomPasswordCheckBox_CheckedChanged(object sender, EventArgs e)
     {
         if (CustomPasswordCheckBox.Checked)

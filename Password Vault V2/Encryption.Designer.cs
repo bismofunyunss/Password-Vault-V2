@@ -280,7 +280,7 @@ namespace Password_Vault_V2
             ImportFileBtn.TabIndex = 1;
             ImportFileBtn.Text = "&Import File";
             ImportFileBtn.UseVisualStyleBackColor = false;
-            ImportFileBtn.Click += ImportFileBtn_Click;
+            this.ImportFileBtn.Click += ImportFileBtn_Click;
             // 
             // Encryption
             // 

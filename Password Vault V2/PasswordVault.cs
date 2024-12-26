@@ -4,6 +4,7 @@ using System.Runtime.InteropServices;
 using System.Security;
 using System.Security.Cryptography;
 using System.Text;
+using System.Windows.Forms;
 
 namespace Password_Vault_V2;
 
@@ -41,7 +42,6 @@ public partial class PasswordVault : Form
     #endregion
 
     #region Methods
-
     private async void BtnLogin_Click(object sender, EventArgs e)
     {
         if (SecurePassword == null)
@@ -192,6 +192,9 @@ public partial class PasswordVault : Form
         await File.WriteAllTextAsync(Authentication.GetUserFilePath(userName),
             encryptedText);
 
+        Crypto.CryptoUtilities.ClearMemory(encryptedBytes);
+        Crypto.CryptoUtilities.ClearMemory(encryptedText);
+
         if (hashedInput == Array.Empty<byte>())
             throw new ArgumentException("An error occured. Please try again.");
 
@@ -272,6 +275,8 @@ public partial class PasswordVault : Form
 
                 await File.WriteAllTextAsync(Authentication.GetUserVault(Authentication.CurrentLoggedInUser),
                     DataConversionHelpers.ByteArrayToBase64String(encryptedBytes));
+
+                Crypto.CryptoUtilities.ClearMemory(encryptedBytes);
 
                 var encryptedPassword = Crypto.CryptoConstants.SecurePassword = ProtectedData.Protect(decryptedPassword,
                     Crypto.CryptoConstants.SecurePasswordSalt, DataProtectionScope.CurrentUser);
@@ -395,12 +400,11 @@ public partial class PasswordVault : Form
         foreach (var t in rainbowTasks)
             await Task.Run(() => t);
     }
-
     private void PasswordVault_Load(object sender, EventArgs e)
     {
         try
         {
-            UiController.LogicMethods.DisableVisibility(WelcomeLabel, _vars.RegisterControls.WelcomeLabel,
+                UiController.LogicMethods.DisableVisibility(WelcomeLabel, _vars.RegisterControls.WelcomeLabel,
                 _vars.VaultControls.WelcomeLabel,
                 _vars.EncryptionControls.WelcomeLabel, _vars.FileHashControls.WelcomeLabel);
 
