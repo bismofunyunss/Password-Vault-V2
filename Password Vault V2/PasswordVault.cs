@@ -50,10 +50,12 @@ public partial class PasswordVault : Form
         var pinnedTextbox = Crypto.Memory.AllocateMemory(PasswordTxt.Text.Length);
         var passwordBytesArray = Crypto.ConversionMethods.ToByteArray(SecurePassword);
 
-        Crypto.CryptoConstants.SecurePasswordSalt = Crypto.CryptoUtilities.RndByteSized(128);
+        Crypto.CryptoConstants.SecurePasswordSalt = Crypto.CryptoUtilities.RndByteSized(Crypto.CryptoConstants.SaltSize);
 
         Crypto.CryptoConstants.SecurePassword = ProtectedData.Protect(passwordBytesArray,
             Crypto.CryptoConstants.SecurePasswordSalt, DataProtectionScope.CurrentUser);
+
+        Crypto.CryptoConstants.PasswordBytes = passwordBytesArray;
 
         switch (RememberMeCheckBox.Checked)
         {
@@ -280,7 +282,7 @@ public partial class PasswordVault : Form
 
                 var encryptedPassword = Crypto.CryptoConstants.SecurePassword = ProtectedData.Protect(decryptedPassword,
                     Crypto.CryptoConstants.SecurePasswordSalt, DataProtectionScope.CurrentUser);
-
+                ///////
                 Crypto.CryptoConstants.SecurePassword = encryptedPassword;
                 Crypto.CryptoUtilities.ClearMemory(decryptedPassword);
 

@@ -38,13 +38,13 @@ public static class UiController
         {
             try
             {
-                while (true)
+                while (!token.IsCancellationRequested)
                 {
                     label.Text = text;
                     for (var i = 0; i < 4; i++)
                     {
                         if (token.IsCancellationRequested)
-                            break;
+                            return;
 
                         label.Text += @".";
                         await Task.Delay(400, token);

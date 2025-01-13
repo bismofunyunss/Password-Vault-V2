@@ -128,29 +128,26 @@ public static partial class Crypto
         return decompressedText;
     }
 
-    public static async Task<byte[]> EncryptNonTxt(string userName, string inputString, byte[] passWord, CancellationToken token)
+    public static async Task<byte[]> EncryptNonTxt(string userName, byte[] input, byte[] passWord, byte[] salt)
     {
         if (string.IsNullOrEmpty(userName))
             throw new ArgumentException("Value was empty.", nameof(userName));
         if (passWord.Length == 0)
             throw new ArgumentException("Value was empty.", nameof(passWord));
 
-        var salt = Authentication.GetUserSalt(userName);
-
         var bytes = await HashingMethods.Argon2Id(passWord, salt, 544);
         var (key, key2, key3, key4, key5, hMacKey, hMacKey2, hMacKey3) = BufferInit.InitBuffers(bytes);
-        var fileBytes = await File.ReadAllBytesAsync(inputString, token);
         var encryptedFile = Array.Empty<byte>();
-
 
         try
         {
-            encryptedFile = EncryptionDecryption.EncryptV3(fileBytes, key, key2, key3, key4,
+            encryptedFile = EncryptionDecryption.EncryptV3(input, key, key2, key3, key4,
                 key5, hMacKey, hMacKey2, hMacKey3);
         }
         catch (Exception ex)
         {
             ErrorLogging.ErrorLog(ex);
+            throw;
         }
 
         var arrays = new[]
@@ -162,29 +159,27 @@ public static partial class Crypto
         return encryptedFile;
     }
 
-    public static async Task<byte[]> DecryptNonTxt(string userName, string inputFile, byte[] passWord, CancellationToken token)
+    public static async Task<byte[]> DecryptNonTxt(string userName, byte[] input, byte[] passWord, byte[] salt)
     {
         if (string.IsNullOrEmpty(userName))
             throw new ArgumentException("Value was empty.", nameof(userName));
         if (passWord.Length == 0)
             throw new ArgumentException("Value was empty.", nameof(passWord));
-        if (string.IsNullOrEmpty(inputFile))
-            throw new ArgumentException("Value was empty.", nameof(inputFile));
-
-        var salt = Authentication.GetUserSalt(userName);
+        if (input.Length == 0)
+            throw new ArgumentException("Value was empty.", nameof(input));
 
         var bytes = await HashingMethods.Argon2Id(passWord, salt, 544);
         var (key, key2, key3, key4, key5, hMacKey, hMacKey2, hMacKey3) = BufferInit.InitBuffers(bytes);
-        var fileBytes = await File.ReadAllBytesAsync(inputFile, token);
         var decryptedFile = Array.Empty<byte>();
         try
         {
-            decryptedFile = EncryptionDecryption.DecryptV3(fileBytes, key, key2, key3, key4,
+            decryptedFile = EncryptionDecryption.DecryptV3(input, key, key2, key3, key4,
                 key5, hMacKey, hMacKey2, hMacKey3);
         }
         catch (Exception ex)
         {
             ErrorLogging.ErrorLog(ex);
+            throw;
         }
 
         var arrays = new[]
@@ -227,6 +222,7 @@ public static partial class Crypto
 
         public static byte[] Hash = [];
         public static byte[] SecurePassword = [];
+        public static byte[] PasswordBytes = [];
 
 #pragma warning restore CA2211
     }
