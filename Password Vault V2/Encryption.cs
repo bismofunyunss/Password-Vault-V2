@@ -222,9 +222,8 @@ public partial class Encryption : UserControl
             Buffer.BlockCopy(FileProcessingConstants.Result, Crypto.CryptoConstants.SaltSize * 2,
                 tempBytes, 0, tempBytes.Length);
 
-            FileProcessingConstants.Result = tempBytes;
-
-            Crypto.CryptoUtilities.ClearMemory(tempBytes);
+            FileProcessingConstants.Result = new byte[tempBytes.Length];
+            Buffer.BlockCopy(tempBytes, 0, FileProcessingConstants.Result, 0, tempBytes.Length);
 
             FileProcessingConstants.PasswordArray = ProtectedData.Unprotect(FileProcessingConstants.PasswordArray,
                 FileProcessingConstants.PasswordSalt, DataProtectionScope.CurrentUser);
@@ -311,7 +310,7 @@ public partial class Encryption : UserControl
             handle.Free();
             var arrays = new[]
             {
-                customPassword, confirmPassword
+                customPassword, confirmPassword, 
             };
             Crypto.CryptoUtilities.ClearMemory(arrays);
         }
