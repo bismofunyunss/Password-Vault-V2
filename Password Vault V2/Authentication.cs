@@ -1,6 +1,4 @@
-﻿using static System.Windows.Forms.VisualStyles.VisualStyleElement.StartPanel;
-
-namespace Password_Vault_V2;
+﻿namespace Password_Vault_V2;
 
 public static class Authentication
 {

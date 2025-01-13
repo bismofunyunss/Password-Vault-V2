@@ -63,7 +63,7 @@ public static class UiController
         }
     }
 
-public static class LogicMethods
+    public static class LogicMethods
     {
         public static void EnableUi(params Control[] c)
         {

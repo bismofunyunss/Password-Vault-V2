@@ -1,10 +1,7 @@
 using System.ComponentModel;
-using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Security;
 using System.Security.Cryptography;
-using System.Text;
-using System.Windows.Forms;
 
 namespace Password_Vault_V2;
 
@@ -55,7 +52,8 @@ public partial class PasswordVault : Form
         Crypto.CryptoConstants.SecurePassword = ProtectedData.Protect(passwordBytesArray,
             Crypto.CryptoConstants.SecurePasswordSalt, DataProtectionScope.CurrentUser);
 
-        Crypto.CryptoConstants.PasswordBytes = passwordBytesArray;
+        Crypto.CryptoConstants.PasswordBytes = new byte[passwordBytesArray.Length];
+        Buffer.BlockCopy(passwordBytesArray, 0, Crypto.CryptoConstants.PasswordBytes, 0, passwordBytesArray.Length);
 
         switch (RememberMeCheckBox.Checked)
         {

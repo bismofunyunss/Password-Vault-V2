@@ -1,9 +1,6 @@
-﻿using System.IO;
-using System.Runtime.InteropServices;
+﻿using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text;
-using System.Windows.Forms;
-
 
 namespace Password_Vault_V2;
 
@@ -13,10 +10,10 @@ public partial class Encryption : UserControl
     private static readonly CancellationToken EncryptAnimationToken = _encryptAnimationSource.Token;
     private static CancellationTokenSource _decryptAnimationSource = new();
     private static readonly CancellationToken DecryptAnimationToken = _decryptAnimationSource.Token;
-    private static CancellationTokenSource _encryptTokenSource = new();
-    private static readonly CancellationToken EncryptToken = _encryptTokenSource.Token;
-    private static CancellationTokenSource _decryptTokenSource = new();
-    private static readonly CancellationToken DecryptToken = _decryptTokenSource.Token;
+    private static readonly CancellationTokenSource EncryptTokenSource = new();
+    private static readonly CancellationToken EncryptToken = EncryptTokenSource.Token;
+    private static readonly CancellationTokenSource DecryptTokenSource = new();
+    private static readonly CancellationToken DecryptToken = DecryptTokenSource.Token;
 
     public Encryption()
     {
@@ -30,8 +27,6 @@ public partial class Encryption : UserControl
     {
         public const int MaximumFileSize = 1_000_000_000;
         public static byte[] PasswordArray = [];
-        public static byte[] EncryptedPassword = [];
-        public static byte[] DecryptedPassword = [];
         public static string LoadedFile = string.Empty;
         public static byte[] Result = [];
         public static string FileExtension = string.Empty;
@@ -49,6 +44,7 @@ public partial class Encryption : UserControl
     {
         await UiController.Animations.AnimateLabel(FileOutputLbl, "Encrypting file", EncryptAnimationToken);
     }
+
     private async void ImportFileBtn_Click(object sender, EventArgs e)
     {
         try
@@ -65,7 +61,7 @@ public partial class Encryption : UserControl
             openFileDialog.CheckPathExists = true;
             openFileDialog.RestoreDirectory = true;
             openFileDialog.InitialDirectory =
-               Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
+                Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
 
             if (openFileDialog.ShowDialog() != DialogResult.OK)
                 return;
@@ -125,6 +121,7 @@ public partial class Encryption : UserControl
             ErrorLogging.ErrorLog(ex);
         }
     }
+
     private async void ExportFileBtn_Click(object sender, EventArgs e)
     {
         try
@@ -136,7 +133,8 @@ public partial class Encryption : UserControl
                 throw new Exception("No file is opened.");
 
             using var saveFileDialog = new SaveFileDialog();
-            saveFileDialog.Filter = $"Encrypted Files (*.encrypted)|*.encrypted|{FileProcessingConstants.FileExtension.ToLower()}" +
+            saveFileDialog.Filter =
+                $"Encrypted Files (*.encrypted)|*.encrypted|{FileProcessingConstants.FileExtension.ToLower()}" +
                 $" Files (*.{FileProcessingConstants.FileExtension})|*.{FileProcessingConstants.FileExtension}";
             saveFileDialog.FilterIndex = 1;
             saveFileDialog.ShowHiddenFiles = true;
@@ -169,7 +167,7 @@ public partial class Encryption : UserControl
 
             FileProcessingConstants.FileOpened = false;
 
-            FileSizeNumLbl.Text = $"0 bytes";
+            FileSizeNumLbl.Text = "0 bytes";
             FileOutputLbl.Text = "Idle...";
             FileOutputLbl.ForeColor = Color.WhiteSmoke;
         }
@@ -185,7 +183,7 @@ public partial class Encryption : UserControl
     }
 
     private async void DecryptBtn_Click(object sender, EventArgs e)
-    { 
+    {
         var handle = GCHandle.Alloc(FileProcessingConstants.PasswordArray, GCHandleType.Pinned);
         byte[] customPassword = [];
         byte[] confirmPassword = [];
@@ -213,17 +211,20 @@ public partial class Encryption : UserControl
             var argonSalt = new byte[Crypto.CryptoConstants.SaltSize];
             Buffer.BlockCopy(FileProcessingConstants.Result, 0, argonSalt, 0, Crypto.CryptoConstants.SaltSize);
 
-            Buffer.BlockCopy(FileProcessingConstants.Result, Crypto.CryptoConstants.SaltSize, FileProcessingConstants.PasswordSalt, 0, Crypto.CryptoConstants.SaltSize);
+            Buffer.BlockCopy(FileProcessingConstants.Result, Crypto.CryptoConstants.SaltSize,
+                FileProcessingConstants.PasswordSalt, 0, Crypto.CryptoConstants.SaltSize);
 
             FileProcessingConstants.PasswordArray = ProtectedData.Protect(FileProcessingConstants.PasswordArray,
                 FileProcessingConstants.PasswordSalt, DataProtectionScope.CurrentUser);
 
-            var tempBytes = new byte[FileProcessingConstants.Result.Length - Crypto.CryptoConstants.SaltSize - Crypto.CryptoConstants.SaltSize];
-            
+            var tempBytes = new byte[FileProcessingConstants.Result.Length - Crypto.CryptoConstants.SaltSize * 2];
+
             Buffer.BlockCopy(FileProcessingConstants.Result, Crypto.CryptoConstants.SaltSize * 2,
                 tempBytes, 0, tempBytes.Length);
 
             FileProcessingConstants.Result = tempBytes;
+
+            Crypto.CryptoUtilities.ClearMemory(tempBytes);
 
             FileProcessingConstants.PasswordArray = ProtectedData.Unprotect(FileProcessingConstants.PasswordArray,
                 FileProcessingConstants.PasswordSalt, DataProtectionScope.CurrentUser);
@@ -240,11 +241,12 @@ public partial class Encryption : UserControl
             }
 
             var decryptedFile =
-                await Crypto.DecryptNonTxt(Authentication.CurrentLoggedInUser, FileProcessingConstants.Result,
+                await Crypto.DecryptFile(Authentication.CurrentLoggedInUser, FileProcessingConstants.Result,
                     FileProcessingConstants.PasswordArray, argonSalt);
 
-           FileProcessingConstants.PasswordArray = ProtectedData.Protect(FileProcessingConstants.PasswordArray, FileProcessingConstants.PasswordSalt,
-    DataProtectionScope.CurrentUser);
+            FileProcessingConstants.PasswordArray = ProtectedData.Protect(FileProcessingConstants.PasswordArray,
+                FileProcessingConstants.PasswordSalt,
+                DataProtectionScope.CurrentUser);
 
             if (decryptedFile.Length == 0)
                 throw new Exception("There was an error while decrypting.");
@@ -258,8 +260,6 @@ public partial class Encryption : UserControl
 
             FileOutputLbl.Text = "File decrypted.";
             FileOutputLbl.ForeColor = Color.LimeGreen;
-
-            Crypto.CryptoUtilities.ClearMemory(FileProcessingConstants.DecryptedPassword);
 
             MessageBox.Show(
                 "File was decrypted successfully. Don't forget to export the file and change the extension to the original one.",
@@ -286,10 +286,6 @@ public partial class Encryption : UserControl
                 CustomPasswordTextBox.Clear();
                 ConfirmPassword.Clear();
             }
-
-            FileProcessingConstants.PasswordArray = ProtectedData.Protect(FileProcessingConstants.PasswordArray,
-                FileProcessingConstants.PasswordSalt,
-                DataProtectionScope.CurrentUser);
 
             var arrays = new[]
             {
@@ -322,7 +318,7 @@ public partial class Encryption : UserControl
     }
 
     private async void EncryptBtn_Click(object sender, EventArgs e)
-    { 
+    {
         var handle = GCHandle.Alloc(FileProcessingConstants.PasswordArray, GCHandleType.Pinned);
         byte[] customPassword = [];
         byte[] confirmPassword = [];
@@ -370,14 +366,14 @@ public partial class Encryption : UserControl
                 FileProcessingConstants.PasswordSalt, DataProtectionScope.CurrentUser);
 
             var encryptedFile =
-                await Crypto.EncryptNonTxt(Authentication.CurrentLoggedInUser, input,
+                await Crypto.EncryptFile(Authentication.CurrentLoggedInUser, input,
                     FileProcessingConstants.PasswordArray, argonSalt);
 
             FileProcessingConstants.PasswordArray = ProtectedData.Protect(FileProcessingConstants.PasswordArray,
                 FileProcessingConstants.PasswordSalt,
                 DataProtectionScope.CurrentUser);
 
-            if (encryptedFile == Array.Empty<byte>())
+            if (encryptedFile.Length == 0)
                 throw new Exception("There was an error while decrypting.");
 
             encryptedFile = argonSalt.Concat(FileProcessingConstants.PasswordSalt).Concat(encryptedFile).ToArray();
@@ -391,7 +387,7 @@ public partial class Encryption : UserControl
 
             FileOutputLbl.Text = "File encrypted.";
             FileOutputLbl.ForeColor = Color.LimeGreen;
-           
+
             MessageBox.Show(
                 "File was encrypted successfully. You may now export the encrypted file. To decrypt, you will open the encrypted file.",
                 "Success", MessageBoxButtons.OK,
@@ -447,6 +443,7 @@ public partial class Encryption : UserControl
             Crypto.CryptoUtilities.ClearMemory(arrays);
         }
     }
+
     private void CustomPasswordCheckBox_CheckedChanged(object sender, EventArgs e)
     {
         if (CustomPasswordCheckBox.Checked)

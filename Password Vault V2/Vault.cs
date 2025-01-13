@@ -7,12 +7,13 @@ namespace Password_Vault_V2;
 public partial class Vault : UserControl
 {
     private static CancellationTokenSource _tokenSource = new();
-    private static CancellationToken Token => _tokenSource.Token;
 
     public Vault()
     {
         InitializeComponent();
     }
+
+    private static CancellationToken Token => _tokenSource.Token;
 
     private void EnableUi()
     {
@@ -167,7 +168,7 @@ public partial class Vault : UserControl
             Crypto.CryptoConstants.SecurePassword = decryptedPassword;
 
             var encryptedVault = await Crypto.EncryptFile(Authentication.CurrentLoggedInUser,
-                    Crypto.CryptoConstants.SecurePassword,
+                Crypto.CryptoConstants.SecurePassword,
                 Authentication.GetUserVault(Authentication.CurrentLoggedInUser));
 
             var encryptedPassword = ProtectedData.Protect(decryptedPassword, Crypto.CryptoConstants.SecurePasswordSalt,
