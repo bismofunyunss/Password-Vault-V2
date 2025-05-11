@@ -1,5 +1,6 @@
 ﻿using System.Runtime.InteropServices;
 using System.Security.Cryptography;
+using System.Text;
 using static Password_Vault_V2.Crypto;
 
 namespace Password_Vault_V2;
@@ -7,9 +8,7 @@ namespace Password_Vault_V2;
 public partial class Encryption : UserControl
 {
     private static CancellationTokenSource _encryptAnimationSource = new();
-    private static readonly CancellationToken EncryptAnimationToken = _encryptAnimationSource.Token;
     private static CancellationTokenSource _decryptAnimationSource = new();
-    private static readonly CancellationToken DecryptAnimationToken = _decryptAnimationSource.Token;
     private static readonly byte[] FileSignature = "v1.0"u8.ToArray(); // 4 bytes
 
     public Encryption()
@@ -19,12 +18,12 @@ public partial class Encryption : UserControl
 
     private async void DecryptingAnimation()
     {
-        await UiController.Animations.AnimateLabel(FileOutputLbl, "Decrypting file", DecryptAnimationToken);
+        await UiController.Animations.AnimateLabel(FileOutputLbl, "Decrypting file", _decryptAnimationSource.Token);
     }
 
     private async void EncryptingAnimation()
     {
-        await UiController.Animations.AnimateLabel(FileOutputLbl, "Encrypting file", EncryptAnimationToken);
+        await UiController.Animations.AnimateLabel(FileOutputLbl, "Encrypting file", _encryptAnimationSource.Token);
     }
 
     private async void ImportFileBtn_Click(object sender, EventArgs e)
@@ -111,20 +110,29 @@ public partial class Encryption : UserControl
 
             using var saveFileDialog = new SaveFileDialog();
 
+            // Determine file extension and filter
+            string extension;
+            string filter;
+
             if (FileProcessingConstants.IsEncrypted)
             {
-                saveFileDialog.Filter = "Encrypted files (*.encrypted)|*.encrypted";
-                saveFileDialog.DefaultExt = ".encrypted";
-                saveFileDialog.FilterIndex = 1;
+                extension = ".encrypted";
+                filter = "Encrypted files (*.encrypted)|*.encrypted";
             }
             else
             {
-                saveFileDialog.Filter =
-                    $"{FileProcessingConstants.FileExtension.ToUpper()} files (*.{FileProcessingConstants.FileExtension})|*.{FileProcessingConstants.FileExtension}|All Files (*.*)|*.*";
-                saveFileDialog.DefaultExt = $".{FileProcessingConstants.FileExtension}";
-                saveFileDialog.FilterIndex = 1; // Default to your file type, not "All Files"
+                // Use original extension from decrypted metadata if available
+                extension = FileProcessingConstants.OriginalExtension;
+                if (string.IsNullOrWhiteSpace(extension) || !extension.StartsWith("."))
+                    extension = $".{FileProcessingConstants.FileExtension}";
+
+                var extNoDot = extension.TrimStart('.');
+                filter = $"{extNoDot.ToUpper()} files (*{extension})|*{extension}|All Files (*.*)|*.*";
             }
 
+            saveFileDialog.Filter = filter;
+            saveFileDialog.DefaultExt = extension;
+            saveFileDialog.FilterIndex = 1;
             saveFileDialog.ShowHiddenFiles = true;
             saveFileDialog.CheckFileExists = false;
             saveFileDialog.CheckPathExists = false;
@@ -136,14 +144,11 @@ public partial class Encryption : UserControl
 
             var selectedFileName = saveFileDialog.FileName;
 
-            // Ensure file extension is correct
+            // Ensure proper extension if user didn't add one manually
             if (string.IsNullOrEmpty(Path.GetExtension(selectedFileName)))
-                selectedFileName = Path.ChangeExtension(selectedFileName, FileProcessingConstants.FileExtension);
-
-            // Check if encrypted file is saved with the correct extension
-            if (FileProcessingConstants.IsEncrypted &&
-                !selectedFileName.EndsWith(".encrypted", StringComparison.OrdinalIgnoreCase))
-                selectedFileName = Path.ChangeExtension(selectedFileName, ".encrypted");
+                selectedFileName = Path.ChangeExtension(selectedFileName, extension);
+            else if (!selectedFileName.EndsWith(extension, StringComparison.OrdinalIgnoreCase))
+                selectedFileName = Path.ChangeExtension(selectedFileName, extension);
 
             if (FileProcessingConstants.Result.Length == 0)
                 throw new InvalidOperationException("There is no data to write to the file.");
@@ -191,6 +196,8 @@ public partial class Encryption : UserControl
                 "If using a custom password to decrypt, you MUST enter the same password used during encryption.",
                 "Info", MessageBoxButtons.OK, MessageBoxIcon.Exclamation);
 
+            DecryptBtn.Enabled = false;
+
             if (string.IsNullOrEmpty(Authentication.CurrentLoggedInUser))
                 throw new Exception("No user is currently logged in.");
 
@@ -220,10 +227,25 @@ public partial class Encryption : UserControl
                 throw new Exception("Invalid file signature. This file may not be a valid encrypted file.");
 
             // Extract Argon2 salt
-            var argonSalt = data.AsSpan(signature.Length, saltSize).ToArray();
+            var saltStart = signature.Length;
+            var saltEnd = saltStart + saltSize;
+            var argonSalt = data.AsSpan(saltStart, saltSize).ToArray();
 
-            // Extract actual encrypted content
-            var encryptedContent = data.AsSpan(expectedHeaderLength).ToArray();
+            // Extract extension length
+            var extLenIndex = saltEnd;
+            var extensionLength = data[extLenIndex];
+
+            // Extract extension bytes
+            var extBytesIndex = extLenIndex + 1;
+            var extensionBytes = data.AsSpan(extBytesIndex, extensionLength).ToArray();
+            var originalExtension = Encoding.UTF8.GetString(extensionBytes);
+
+            // Store the extension for later use
+            FileProcessingConstants.OriginalExtension = originalExtension;
+
+            // Extract encrypted content
+            var encryptedStartIndex = extBytesIndex + extensionLength;
+            var encryptedContent = data.AsSpan(encryptedStartIndex).ToArray();
             FileProcessingConstants.Result = encryptedContent;
 
             // Decrypt stored login password
@@ -297,7 +319,7 @@ public partial class Encryption : UserControl
 
             FileOutputLbl.Text = "Idle...";
             FileOutputLbl.ForeColor = Color.WhiteSmoke;
-
+            FileProcessingConstants.IsDecrypted = false;
             ErrorLogging.ErrorLog(ex);
         }
         finally
@@ -308,6 +330,7 @@ public partial class Encryption : UserControl
             if (customPassword != null) CryptoUtilities.ClearMemory(customPassword);
             if (confirmPassword != null) CryptoUtilities.ClearMemory(confirmPassword);
             if (decryptedPassword != null) CryptoUtilities.ClearMemory(decryptedPassword);
+            DecryptBtn.Enabled = true;
         }
     }
 
@@ -326,6 +349,9 @@ public partial class Encryption : UserControl
                 "decrypt the file without the password. It is separate than the password you use to login with.",
                 "Info",
                 MessageBoxButtons.OK, MessageBoxIcon.Exclamation);
+
+            EncryptBtn.Enabled = false;
+
 
             if (string.IsNullOrEmpty(Authentication.CurrentLoggedInUser))
                 throw new Exception("No user is currently logged in.");
@@ -386,12 +412,26 @@ public partial class Encryption : UserControl
 
             CryptoConstants.SecurePassword = encryptedPassword;
 
-            // Add signature + salt to encrypted file
-            encryptedFile = [.. FileSignature, .. argonSalt, .. encryptedFile];
+            // --- New: Embed original extension ---
+            var originalExtension = Path.GetExtension(FileProcessingConstants.LoadedFile) ?? string.Empty;
+            var extensionBytes = Encoding.UTF8.GetBytes(originalExtension);
+            if (extensionBytes.Length > 255)
+                throw new Exception("File extension too long to store.");
+            var extensionLength = (byte)extensionBytes.Length;
+
+            // Final format: [FileSignature][Salt][ExtensionLength][ExtensionBytes][EncryptedContent]
+            encryptedFile =
+            [
+                .. FileSignature,
+                .. argonSalt,
+                extensionLength,
+                .. extensionBytes,
+                .. encryptedFile
+            ];
 
             await _encryptAnimationSource.CancelAsync();
-            if (_encryptAnimationSource.IsCancellationRequested)
-                _encryptAnimationSource = new CancellationTokenSource();
+            _encryptAnimationSource.Dispose();
+            _encryptAnimationSource = new CancellationTokenSource();
 
             FileProcessingConstants.Result = encryptedFile;
 
@@ -422,8 +462,8 @@ public partial class Encryption : UserControl
             ConfirmPassword.Clear();
 
             await _encryptAnimationSource.CancelAsync();
-            if (_encryptAnimationSource.IsCancellationRequested)
-                _encryptAnimationSource = new CancellationTokenSource();
+            _encryptAnimationSource.Dispose();
+            _encryptAnimationSource = new CancellationTokenSource();
 
             FileOutputLbl.Text = "Error encrypting file.";
             FileOutputLbl.ForeColor = Color.Red;
@@ -432,7 +472,7 @@ public partial class Encryption : UserControl
 
             FileOutputLbl.Text = "Idle...";
             FileOutputLbl.ForeColor = Color.WhiteSmoke;
-
+            FileProcessingConstants.IsEncrypted = false;
             ErrorLogging.ErrorLog(ex);
         }
         finally
@@ -443,6 +483,7 @@ public partial class Encryption : UserControl
             if (customPassword != null) CryptoUtilities.ClearMemory(customPassword);
             if (confirmPassword != null) CryptoUtilities.ClearMemory(confirmPassword);
             if (decryptedPassword != null) CryptoUtilities.ClearMemory(decryptedPassword);
+            EncryptBtn.Enabled = true;
         }
     }
 
@@ -474,5 +515,6 @@ public partial class Encryption : UserControl
         public static bool IsDecrypted;
         public static bool FileOpened { get; set; }
         public static long FileSize { get; set; }
+        public static string OriginalExtension { get; set; }
     }
 }

@@ -40,13 +40,12 @@ public static class UiController
             {
                 while (!token.IsCancellationRequested)
                 {
-                    label.Text = text;
                     for (var i = 0; i < 4; i++)
                     {
                         if (token.IsCancellationRequested)
                             return;
 
-                        label.Text += @".";
+                        label.Text = text + new string('.', i + 1);
                         await Task.Delay(400, token);
                     }
                 }
