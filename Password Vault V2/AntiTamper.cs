@@ -3,8 +3,10 @@ using System.Runtime.InteropServices;
 
 namespace Password_Vault_V2;
 
+// This class just causes problems during encryption and decryption. it is currently disabled.
 public static class AntiTamper
 {
+#pragma warning disable
     public static async Task<bool> PerformChecks()
     {
         return await Task.Run(() =>
@@ -497,4 +499,5 @@ public static class AntiTamper
         public static extern IntPtr VirtualProtect(IntPtr lpAddress, IntPtr dwSize, IntPtr flNewProtect,
             ref IntPtr lpflOldProtect);
     }
+#pragma warning restore
 }

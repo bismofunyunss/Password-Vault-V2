@@ -1,7 +1,10 @@
+using Konscious.Security.Cryptography;
 using System.ComponentModel;
 using System.Runtime.InteropServices;
 using System.Security;
 using System.Security.Cryptography;
+using Windows.Devices.Geolocation;
+using static Password_Vault_V2.Crypto;
 
 namespace Password_Vault_V2;
 
@@ -44,13 +47,14 @@ public partial class PasswordVault : Form
         if (SecurePassword == null)
             return;
 
-        var pinnedTextbox = Crypto.Memory.AllocateMemory(PasswordTxt.Text.Length);
-        var passwordBytesArray = Crypto.ConversionMethods.ToByteArray(SecurePassword);
+        var passwordBytesArray = Crypto.ConversionMethods.SecureStringToUtf8Bytes(SecurePassword);
+
 
         Crypto.CryptoConstants.SecurePasswordSalt = Crypto.CryptoUtilities.RndByteSized(Crypto.CryptoConstants.SaltSize);
 
         Crypto.CryptoConstants.SecurePassword = ProtectedData.Protect(passwordBytesArray,
             Crypto.CryptoConstants.SecurePasswordSalt, DataProtectionScope.CurrentUser);
+
 
         Crypto.CryptoConstants.PasswordBytes = new byte[passwordBytesArray.Length];
         Buffer.BlockCopy(passwordBytesArray, 0, Crypto.CryptoConstants.PasswordBytes, 0, passwordBytesArray.Length);
@@ -92,7 +96,7 @@ public partial class PasswordVault : Form
             if (UsernameTxt.Text == string.Empty)
                 throw new Exception("Username value was empty.");
 
-            if (PasswordTxt.Text == string.Empty)
+            if (SecurePassword.Length == 0)
                 throw new Exception("Password value was empty.");
 
             UiController.LogicMethods.DisableUi(UsernameTxt, PasswordTxt, BtnLogin, LogoutBtn,
@@ -126,8 +130,9 @@ public partial class PasswordVault : Form
         finally
         {
             Crypto.CryptoUtilities.ClearMemory(passwordBytesArray);
-            Crypto.Memory.FreeMemory(pinnedTextbox);
+            Crypto.CryptoUtilities.ClearMemory(Crypto.CryptoConstants.PasswordBytes);
 
+            PasswordTxt.Text = string.Empty;
             GC.Collect(GC.MaxGeneration, GCCollectionMode.Aggressive, true, true);
             GC.WaitForPendingFinalizers();
         }
@@ -240,6 +245,7 @@ public partial class PasswordVault : Form
     {
         if (!File.Exists(Authentication.GetUserFilePath(UsernameTxt.Text)))
             return;
+
         try
         {
             if (File.Exists(Authentication.GetUserVault(UsernameTxt.Text)))
@@ -278,10 +284,9 @@ public partial class PasswordVault : Form
 
                 Crypto.CryptoUtilities.ClearMemory(encryptedBytes);
 
-                var encryptedPassword = Crypto.CryptoConstants.SecurePassword = ProtectedData.Protect(decryptedPassword,
-                    Crypto.CryptoConstants.SecurePasswordSalt, DataProtectionScope.CurrentUser);
-                ///////
-                Crypto.CryptoConstants.SecurePassword = encryptedPassword;
+
+                Crypto.CryptoConstants.SecurePassword = ProtectedData.Protect(decryptedPassword,
+                Crypto.CryptoConstants.SecurePasswordSalt, DataProtectionScope.CurrentUser);
                 Crypto.CryptoUtilities.ClearMemory(decryptedPassword);
 
                 StatusOutputLabel.ForeColor = Color.LimeGreen;
@@ -404,9 +409,9 @@ public partial class PasswordVault : Form
     {
         try
         {
-                UiController.LogicMethods.DisableVisibility(WelcomeLabel, _vars.RegisterControls.WelcomeLabel,
-                _vars.VaultControls.WelcomeLabel,
-                _vars.EncryptionControls.WelcomeLabel, _vars.FileHashControls.WelcomeLabel);
+            UiController.LogicMethods.DisableVisibility(WelcomeLabel, _vars.RegisterControls.WelcomeLabel,
+            _vars.VaultControls.WelcomeLabel,
+            _vars.EncryptionControls.WelcomeLabel, _vars.FileHashControls.WelcomeLabel);
 
             PasswordTxt.PasswordChar = '●';
             CryptoSettings.Iterations = Settings.Default.Iterations;
@@ -641,7 +646,6 @@ public partial class PasswordVault : Form
     #endregion
 
     #region DragForm
-
     private void PasswordVault_MouseDown(object sender, MouseEventArgs e)
     {
         if (e.Button != MouseButtons.Left)
@@ -736,5 +740,4 @@ public partial class PasswordVault : Form
 
     }
 }
-
 #endregion TextboxBehavior

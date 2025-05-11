@@ -47,10 +47,10 @@ public partial class Register : UserControl
 
         if (SecurePassword != null)
         {
-            var passwordBytes = Crypto.ConversionMethods.ToByteArray(SecurePassword);
+            var passwordBytes = Crypto.ConversionMethods.SecureStringToUtf8Bytes(SecurePassword);
             if (SecureConfirmPassword != null)
             {
-                var confirmPasswordBytes = Crypto.ConversionMethods.ToByteArray(SecureConfirmPassword);
+                var confirmPasswordBytes = Crypto.ConversionMethods.SecureStringToUtf8Bytes(SecureConfirmPassword);
 
                 try
                 {
@@ -117,6 +117,8 @@ public partial class Register : UserControl
     /// <param name="confirmPassword">The confirmation of the user's password.</param>
     private async Task RegisterAsync(string username, byte[] password, byte[] confirmPassword)
     {
+        var iterations = 32;
+
         Process.GetCurrentProcess().PriorityClass = ProcessPriorityClass.Normal;
 
         StartAnimation();
@@ -124,7 +126,7 @@ public partial class Register : UserControl
         var passwordChars = Encoding.UTF8.GetChars(password);
         var confirmPasswordChars = Encoding.UTF8.GetChars(confirmPassword);
 
-        ValidateUsernameAndPassword(username, ref passwordChars, ref confirmPasswordChars);
+        ValidateUsernameAndPassword(username, passwordChars, confirmPasswordChars);
 
         var userName = userTxt.Text;
 
@@ -134,7 +136,7 @@ public partial class Register : UserControl
         var userSalt = Path.Combine(userDirectory, $"{userName}.salt");
 
         var salt = Crypto.CryptoUtilities.RndByteSized(Crypto.CryptoConstants.SaltSize);
-        var hashedPassword = await Crypto.HashingMethods.Argon2Id(password, salt, 32);
+        var hashedPassword = await Crypto.HashingMethods.Argon2Id(password, salt, iterations);
 
         GC.Collect(GC.MaxGeneration, GCCollectionMode.Aggressive, true, true);
 
@@ -208,7 +210,7 @@ public partial class Register : UserControl
     /// <exception cref="ArgumentException">
     ///     Thrown if the username or password does not meet the specified criteria.
     /// </exception>
-    private static void ValidateUsernameAndPassword(string userName, ref char[] password, ref char[] password2)
+    private static void ValidateUsernameAndPassword(string userName, char[] password, char[] password2)
     {
         if (!userName.All(c => char.IsLetterOrDigit(c) || c == '_' || c == ' '))
             throw new ArgumentException(
@@ -295,7 +297,7 @@ public partial class Register : UserControl
         base.Dispose(disposing);
     }
 
-    private void passTxt_TextChanged(object sender, EventArgs e)
+    private void PassTxt_TextChanged(object sender, EventArgs e)
     {
         if (SecurePassword == null)
             return;
@@ -303,7 +305,7 @@ public partial class Register : UserControl
         foreach (var c in passTxt.Text) SecurePassword.AppendChar(c);
     }
 
-    private void confirmPassTxt_TextChanged(object sender, EventArgs e)
+    private void ConfirmPassTxt_TextChanged(object sender, EventArgs e)
     {
         if (SecureConfirmPassword == null)
             return;

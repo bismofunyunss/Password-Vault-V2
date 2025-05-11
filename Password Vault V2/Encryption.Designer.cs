@@ -172,7 +172,6 @@ namespace Password_Vault_V2
             CustomPasswordCheckBox.TabIndex = 7;
             CustomPasswordCheckBox.Text = "Use Custom Password";
             CustomPasswordCheckBox.UseVisualStyleBackColor = true;
-            CustomPasswordCheckBox.CheckedChanged += CustomPasswordCheckBox_CheckedChanged;
             // 
             // FileSizeNumLbl
             // 
@@ -180,9 +179,9 @@ namespace Password_Vault_V2
             FileSizeNumLbl.Font = new Font("Century Gothic", 11F);
             FileSizeNumLbl.Location = new Point(121, 372);
             FileSizeNumLbl.Name = "FileSizeNumLbl";
-            FileSizeNumLbl.Size = new Size(24, 25);
+            FileSizeNumLbl.Size = new Size(89, 25);
             FileSizeNumLbl.TabIndex = 16;
-            FileSizeNumLbl.Text = "0";
+            FileSizeNumLbl.Text = "0 bytes";
             // 
             // FileSizeLbl
             // 
@@ -280,7 +279,7 @@ namespace Password_Vault_V2
             ImportFileBtn.TabIndex = 1;
             ImportFileBtn.Text = "&Import File";
             ImportFileBtn.UseVisualStyleBackColor = false;
-            this.ImportFileBtn.Click += ImportFileBtn_Click;
+            ImportFileBtn.Click += ImportFileBtn_Click;
             // 
             // Encryption
             // 
@@ -290,7 +289,6 @@ namespace Password_Vault_V2
             Controls.Add(FileEncryptDecryptBox);
             Name = "Encryption";
             Size = new Size(936, 432);
-            Load += Encryption_Load;
             FileEncryptDecryptBox.ResumeLayout(false);
             FileEncryptDecryptBox.PerformLayout();
             ((ISupportInitialize)pictureBox1).EndInit();

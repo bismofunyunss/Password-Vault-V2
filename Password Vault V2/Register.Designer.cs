@@ -73,7 +73,7 @@ namespace Password_Vault_V2
             passTxt.Size = new Size(438, 34);
             passTxt.TabIndex = 2;
             passTxt.UseSystemPasswordChar = true;
-            passTxt.TextChanged += passTxt_TextChanged;
+            passTxt.TextChanged += PassTxt_TextChanged;
             // 
             // confirmPassLbl
             // 
@@ -95,7 +95,7 @@ namespace Password_Vault_V2
             confirmPassTxt.Size = new Size(438, 34);
             confirmPassTxt.TabIndex = 3;
             confirmPassTxt.UseSystemPasswordChar = true;
-            confirmPassTxt.TextChanged += confirmPassTxt_TextChanged;
+            confirmPassTxt.TextChanged += ConfirmPassTxt_TextChanged;
             // 
             // CreateAccountBtn
             // 

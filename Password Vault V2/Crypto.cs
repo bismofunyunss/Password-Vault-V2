@@ -17,26 +17,6 @@ namespace Password_Vault_V2;
 
 public static partial class Crypto
 {
-    /// <summary>
-    ///     Encrypts the contents of a file using Argon2 key derivation and four layers of encryption.
-    /// </summary>
-    /// <param name="userName">The username associated with the user's salt for key derivation.</param>
-    /// <param name="passWord">The user's password used for key derivation.</param>
-    /// <param name="plainText">The plaintext to encrypt.</param>
-    /// <returns>
-    ///     A Task that completes with the encrypted content of the specified file.
-    ///     If any error occurs during the process, returns an empty byte array.
-    /// </returns>
-    /// <remarks>
-    ///     This method performs the following steps:
-    ///     1. Validates input parameters to ensure they are not null or empty.
-    ///     2. Retrieves the user-specific salt for key derivation.
-    ///     3. Derives an encryption key from the user's password and the obtained salt using Argon2id.
-    ///     4. Extracts key components for encryption, including two keys and an HMAC key.
-    ///     5. Reads and encodes the content of the specified file.
-    ///     6. Encrypts the file content using XChaCha20-Poly1305 encryption.
-    ///     7. Clears sensitive information, such as the user's password, from memory.
-    /// </remarks>
     public static async Task<byte[]> EncryptFile(string userName, byte[] passWord, string plainText)
     {
         if (string.IsNullOrEmpty(userName))
@@ -128,6 +108,22 @@ public static partial class Crypto
         return decompressedText;
     }
 
+    /// <summary>
+    ///     Encrypts a file using a multi-layer encryption scheme and securely clears sensitive data from memory.
+    /// </summary>
+    /// <param name="userName">The username associated with the encryption process.</param>
+    /// <param name="input">The input file content in bytes to be encrypted.</param>
+    /// <param name="passWord">The password used to derive encryption keys.</param>
+    /// <param name="salt">The salt value used for key derivation.</param>
+    /// <returns>
+    ///     A task representing the asynchronous operation, with the result being the encrypted file content as a byte
+    ///     array.
+    /// </returns>
+    /// <exception cref="ArgumentException">
+    ///     Thrown if <paramref name="userName" />, <paramref name="input" />, <paramref name="passWord" />, or
+    ///     <paramref name="salt" /> is null or empty.
+    /// </exception>
+    /// <exception cref="Exception">Re-throws any exception encountered during the encryption process after logging the error.</exception>
     public static async Task<byte[]> EncryptFile(string userName, byte[] input, byte[] passWord, byte[] salt)
     {
         if (string.IsNullOrEmpty(userName))
@@ -166,6 +162,22 @@ public static partial class Crypto
         return encryptedFile;
     }
 
+    /// <summary>
+    ///     Decrypts a file using a multi-layer decryption scheme and securely clears sensitive data from memory.
+    /// </summary>
+    /// <param name="userName">The username associated with the decryption process.</param>
+    /// <param name="input">The encrypted file content in bytes to be decrypted.</param>
+    /// <param name="passWord">The password used to derive decryption keys.</param>
+    /// <param name="salt">The salt value used for key derivation.</param>
+    /// <returns>
+    ///     A task representing the asynchronous operation, with the result being the decrypted file content as a byte
+    ///     array.
+    /// </returns>
+    /// <exception cref="ArgumentException">
+    ///     Thrown if <paramref name="userName" />, <paramref name="input" />, <paramref name="passWord" />, or
+    ///     <paramref name="salt" /> is null or empty.
+    /// </exception>
+    /// <exception cref="Exception">Re-throws any exception encountered during the decryption process after logging the error.</exception>
     public static async Task<byte[]> DecryptFile(string userName, byte[] input, byte[] passWord, byte[] salt)
     {
         if (string.IsNullOrEmpty(userName))
@@ -203,17 +215,10 @@ public static partial class Crypto
         return decryptedFile;
     }
 
-    private static partial class Memset
-    {
-        [LibraryImport("msvcrt.dll", EntryPoint = "memset", SetLastError = false)]
-        [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
-        public static partial void MemSet(IntPtr dest, int c, int byteCount);
-    }
-
     /// <summary>
     ///     Utility class for cryptographic settings and initialization.
     /// </summary>
-    public static class CryptoConstants
+    public class CryptoConstants
     {
         public const int SaltSize = 128;
         public const int HmacLength = 64;
@@ -224,12 +229,13 @@ public static partial class Crypto
         public const int ShuffleKey = 128;
         public const int BlockBitSize = 128;
         public const int KeyBitSize = 256;
-        public static int Iterations = Settings.Default.Iterations;
-        public static double MemorySize = Settings.Default.MemorySize * Math.Pow(1024, 2);
-        public static int Parallelism = Settings.Default.Parallelism;
+        public static readonly int Iterations = Settings.Default.Iterations;
+        public static readonly double MemorySize = Settings.Default.MemorySize * Math.Pow(1024, 2);
+        public static readonly int Parallelism = Settings.Default.Parallelism;
 
         public static readonly RandomNumberGenerator RndNum = RandomNumberGenerator.Create();
         public static byte[] SecurePasswordSalt = [];
+        public static byte[] EncryptionSalt = [];
 #pragma warning disable CA2211
 
         public static byte[] Hash = [];
@@ -239,9 +245,16 @@ public static partial class Crypto
 #pragma warning restore CA2211
     }
 
+    private static partial class Memset
+    {
+        [LibraryImport("msvcrt.dll", EntryPoint = "memset", SetLastError = false)]
+        [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
+        public static partial void MemSet(IntPtr dest, int c, int byteCount);
+    }
+
     public static class ConversionMethods
     {
-        public static byte[] ToByteArray(SecureString secureString)
+        public static byte[] SecureStringToUtf8Bytes(SecureString secureString)
         {
             if (secureString == null)
                 throw new ArgumentNullException(nameof(secureString), "Value was null.");
@@ -281,10 +294,12 @@ public static partial class Crypto
             finally
             {
                 // Zero out the unmanaged memory
-                if (unmanagedString != IntPtr.Zero) Marshal.ZeroFreeGlobalAllocUnicode(unmanagedString);
+                if (unmanagedString != IntPtr.Zero)
+                    Marshal.ZeroFreeGlobalAllocUnicode(unmanagedString);
             }
         }
     }
+
 
     public static class HashingMethods
     {
@@ -502,16 +517,18 @@ public static partial class Crypto
         /// <exception cref="ArgumentNullException">Thrown if any of the input arrays is null.</exception>
         public static void ClearMemory(params byte[][] arrays)
         {
-            if (arrays == null)
-                throw new ArgumentNullException(nameof(arrays), "Input cannot be null.");
+            if (arrays.Length == 0)
+                throw new ArgumentNullException(nameof(arrays), "Input cannot be null or empty.");
 
+            foreach (var array in arrays)
             foreach (var byteArray in arrays)
             {
                 var handle = GCHandle.Alloc(byteArray, GCHandleType.Pinned);
 
                 try
                 {
-                    Memset.MemSet(handle.AddrOfPinnedObject(), 0, byteArray.Length);
+                    if (byteArray != null)
+                        Memset.MemSet(handle.AddrOfPinnedObject(), 0, byteArray.Length);
                 }
                 catch (AccessViolationException ex)
                 {
@@ -528,10 +545,23 @@ public static partial class Crypto
             }
         }
 
-        public static void ClearMemory(byte[] array)
+        /// <summary>
+        ///     Clears the sensitive information stored in one or more byte arrays using memset.
+        /// </summary>
+        /// <remarks>
+        ///     This method uses a pinned array and the SecureMemoryClear function to overwrite the memory
+        ///     containing sensitive information, enhancing security by preventing the information from being
+        ///     easily accessible in memory.
+        /// </remarks>
+        /// <param name="arrays">The byte arrays containing sensitive information to be cleared.</param>
+        /// <param name="array"></param>
+        /// <exception cref="ArgumentNullException">Thrown if any of the input arrays is null.</exception>
+        public static void ClearMemory(byte[]? array)
         {
-            var handle = GCHandle.Alloc(array, GCHandleType.Pinned);
+            if (array == null || array.Length == 0)
+                return;
 
+            var handle = GCHandle.Alloc(array, GCHandleType.Pinned);
             try
             {
                 Memset.MemSet(handle.AddrOfPinnedObject(), 0, array.Length * sizeof(byte));
@@ -683,7 +713,7 @@ public static partial class Crypto
         ///     easily accessible in memory.
         /// </remarks>
         /// <exception cref="ArgumentNullException">Thrown if any of the input strings is null.</exception>
-        public static void ClearMemory(int size, ref IntPtr ptr)
+        public static void ClearMemory(int size, IntPtr ptr)
         {
             if (ptr == IntPtr.Zero)
                 throw new ArgumentNullException(nameof(ptr), "Invalid ptr.");
@@ -788,6 +818,8 @@ public static partial class Crypto
             var hMacKey3 = new byte[CryptoConstants.HmacLength];
 
             CopyBytes(src, key, key2, key3, key4, key5, hMacKey, hMackey2, hMacKey3);
+
+            CryptoUtilities.ClearMemory(src);
 
             return (key, key2, key3, key4, key5, hMacKey, hMackey2, hMacKey3);
         }
@@ -987,47 +1019,47 @@ public static partial class Crypto
         /// <exception cref="CryptographicException">Thrown when the authentication tag does not match.</exception>
         public static byte[] EncryptAes(byte[] inputText, byte[] key, byte[] iv, byte[] hMacKey)
         {
-            if (inputText == Array.Empty<byte>())
-                throw new ArgumentException("Value was empty or null.", nameof(inputText));
-            if (key == Array.Empty<byte>())
-                throw new ArgumentException("Value was empty or null.", nameof(key));
-            if (iv == Array.Empty<byte>())
-                throw new ArgumentException("Value was empty or null.", nameof(iv));
-            if (hMacKey == Array.Empty<byte>())
-                throw new ArgumentException("Value was empty or null.", nameof(hMacKey));
+            if (inputText == null || inputText.Length == 0)
+                throw new ArgumentException("Input data is null or empty.", nameof(inputText));
+            if (key == null || key.Length == 0)
+                throw new ArgumentException("Encryption key is null or empty.", nameof(key));
+            if (iv == null || iv.Length == 0)
+                throw new ArgumentException("IV is null or empty.", nameof(iv));
+            if (hMacKey == null || hMacKey.Length == 0)
+                throw new ArgumentException("HMAC key is null or empty.", nameof(hMacKey));
 
             using var aes = Aes.Create();
-            aes.BlockSize = CryptoConstants.BlockBitSize;
             aes.KeySize = CryptoConstants.KeyBitSize;
+            aes.BlockSize = CryptoConstants.BlockBitSize;
             aes.Mode = CipherMode.CBC;
             aes.Padding = PaddingMode.PKCS7;
 
             byte[] cipherText;
-
-            using (var encryptor = aes.CreateEncryptor(key, iv))
             using (var memStream = new MemoryStream())
+            using (var encryptor = aes.CreateEncryptor(key, iv))
+            using (var cryptoStream = new CryptoStream(memStream, encryptor, CryptoStreamMode.Write))
             {
-                using (var cryptoStream = new CryptoStream(memStream, encryptor, CryptoStreamMode.Write))
-                using (var cipherStream = new MemoryStream(inputText))
-                {
-                    cipherStream.CopyTo(cryptoStream, (int)cipherStream.Length);
-                    cryptoStream.FlushFinalBlock();
-                }
-
+                cryptoStream.Write(inputText, 0, inputText.Length);
+                cryptoStream.FlushFinalBlock();
                 cipherText = memStream.ToArray();
             }
 
-            var prependItems = new byte[cipherText.Length + iv.Length];
-            Buffer.BlockCopy(iv, 0, prependItems, 0, iv.Length);
-            Buffer.BlockCopy(cipherText, 0, prependItems, iv.Length, cipherText.Length);
+            // Combine IV and ciphertext
+            var combined = new byte[iv.Length + cipherText.Length];
+            Buffer.BlockCopy(iv, 0, combined, 0, iv.Length);
+            Buffer.BlockCopy(cipherText, 0, combined, iv.Length, cipherText.Length);
 
-            var tag = HashingMethods.HmacSha3(prependItems, hMacKey);
-            var authenticatedBuffer = new byte[prependItems.Length + tag.Length];
-            Buffer.BlockCopy(prependItems, 0, authenticatedBuffer, 0, prependItems.Length);
-            Buffer.BlockCopy(tag, 0, authenticatedBuffer, prependItems.Length, tag.Length);
+            // Compute HMAC
+            var tag = HashingMethods.HmacSha3(combined, hMacKey);
 
-            return authenticatedBuffer;
+            // Combine data + tag
+            var result = new byte[combined.Length + tag.Length];
+            Buffer.BlockCopy(combined, 0, result, 0, combined.Length);
+            Buffer.BlockCopy(tag, 0, result, combined.Length, tag.Length);
+
+            return result;
         }
+
 
         /// <summary>
         ///     Decrypts a byte array that has been encrypted using the AES block cipher in Cipher Block Chaining
@@ -1042,51 +1074,55 @@ public static partial class Crypto
         /// <exception cref="CryptographicException">Thrown when the authentication tag does not match.</exception>
         public static byte[] DecryptAes(byte[] inputText, byte[] key, byte[] hMacKey)
         {
-            if (inputText == Array.Empty<byte>())
-                throw new ArgumentException("Value was empty or null.", nameof(inputText));
-            if (key == Array.Empty<byte>())
-                throw new ArgumentException("Value was empty or null.", nameof(key));
-            if (hMacKey == Array.Empty<byte>())
-                throw new ArgumentException("Value was empty or null.", nameof(hMacKey));
+            if (inputText == null || inputText.Length == 0)
+                throw new ArgumentException("Input data is null or empty.", nameof(inputText));
+            if (key == null || key.Length == 0)
+                throw new ArgumentException("Decryption key is null or empty.", nameof(key));
+            if (hMacKey == null || hMacKey.Length == 0)
+                throw new ArgumentException("HMAC key is null or empty.", nameof(hMacKey));
 
+            var tagLength = CryptoConstants.HmacLength;
+            var ivLength = CryptoConstants.Iv;
+
+            if (inputText.Length < ivLength + tagLength)
+                throw new CryptographicException("Input data is too short.");
+
+            // Separate tag
+            var expectedTag = new byte[tagLength];
+            Buffer.BlockCopy(inputText, inputText.Length - tagLength, expectedTag, 0, tagLength);
+
+            // Extract ciphertext with IV
+            var dataLength = inputText.Length - tagLength;
+            var cipherWithIv = new byte[dataLength];
+            Buffer.BlockCopy(inputText, 0, cipherWithIv, 0, dataLength);
+
+            // Verify HMAC
+            var actualTag = HashingMethods.HmacSha3(cipherWithIv, hMacKey);
+            if (!CryptographicOperations.FixedTimeEquals(expectedTag, actualTag))
+                throw new CryptographicException("Authentication tag does not match.");
+
+            // Extract IV and ciphertext
+            var iv = new byte[ivLength];
+            var cipherText = new byte[dataLength - ivLength];
+            Buffer.BlockCopy(cipherWithIv, 0, iv, 0, ivLength);
+            Buffer.BlockCopy(cipherWithIv, ivLength, cipherText, 0, cipherText.Length);
+
+            // Decrypt
             using var aes = Aes.Create();
-            aes.BlockSize = CryptoConstants.BlockBitSize;
             aes.KeySize = CryptoConstants.KeyBitSize;
+            aes.BlockSize = CryptoConstants.BlockBitSize;
             aes.Mode = CipherMode.CBC;
             aes.Padding = PaddingMode.PKCS7;
 
-            var receivedHash = new byte[CryptoConstants.HmacLength];
-            Buffer.BlockCopy(inputText, inputText.Length - CryptoConstants.HmacLength, receivedHash, 0,
-                CryptoConstants.HmacLength);
-
-            var cipherWithIv = new byte[inputText.Length - CryptoConstants.HmacLength];
-            Buffer.BlockCopy(inputText, 0, cipherWithIv, 0, inputText.Length - CryptoConstants.HmacLength);
-
-            var hashedInput = HashingMethods.HmacSha3(cipherWithIv, hMacKey);
-
-            var isMatch = CryptographicOperations.FixedTimeEquals(receivedHash, hashedInput);
-            if (!isMatch)
-                throw new CryptographicException("Authentication tag does not match.");
-
-            var iv = new byte[CryptoConstants.Iv];
-            var cipherResult = new byte[inputText.Length - CryptoConstants.Iv - CryptoConstants.HmacLength];
-
-            Buffer.BlockCopy(inputText, 0, iv, 0, iv.Length);
-            Buffer.BlockCopy(inputText, iv.Length, cipherResult, 0, cipherResult.Length);
-
-            using var decryptor = aes.CreateDecryptor(key, iv);
             using var memStream = new MemoryStream();
-
-            using (var decryptStream = new CryptoStream(memStream, decryptor, CryptoStreamMode.Write))
-            using (var plainStream = new MemoryStream(cipherResult))
-            {
-                plainStream.CopyTo(decryptStream, (int)plainStream.Length);
-                plainStream.Flush();
-                decryptStream.FlushFinalBlock();
-            }
+            using var decryptor = aes.CreateDecryptor(key, iv);
+            using var cryptoStream = new CryptoStream(memStream, decryptor, CryptoStreamMode.Write);
+            cryptoStream.Write(cipherText, 0, cipherText.Length);
+            cryptoStream.FlushFinalBlock();
 
             return memStream.ToArray();
         }
+
 
         /// <summary>
         ///     Encrypts a byte array using the ThreeFish block cipher in Cipher Block Chaining (CBC) mode with HMAC-SHA3
