@@ -1,4 +1,4 @@
-﻿using System.Runtime.InteropServices;
+﻿using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
 using static Password_Vault_V2.Crypto;
@@ -9,7 +9,7 @@ public partial class Encryption : UserControl
 {
     private static CancellationTokenSource _encryptAnimationSource = new();
     private static CancellationTokenSource _decryptAnimationSource = new();
-    private static readonly byte[] FileSignature = "v1.0"u8.ToArray(); // 4 bytes
+    private static readonly byte[] MasterKey = Crypto.MasterKey.GetKey();
 
     public Encryption()
     {
@@ -30,7 +30,7 @@ public partial class Encryption : UserControl
     {
         try
         {
-            if (string.IsNullOrWhiteSpace(Authentication.CurrentLoggedInUser))
+            if (string.IsNullOrEmpty(UserFileManager.CurrentLoggedInUser))
                 throw new InvalidOperationException("No user is currently logged in.");
 
             using var openFileDialog = new OpenFileDialog
@@ -52,17 +52,18 @@ public partial class Encryption : UserControl
             var fileInfo = new FileInfo(selectedFileName);
 
             if (fileInfo.Length > FileProcessingConstants.MaximumFileSize)
-                throw new ArgumentException("File size exceeds the maximum allowed limit.");
+                throw new Exception("File size exceeds the maximum allowed limit.");
 
             FileProcessingConstants.FileOpened = true;
             FileProcessingConstants.LoadedFile = selectedFileName;
-            FileProcessingConstants.Result = await File.ReadAllBytesAsync(selectedFileName);
+            FileProcessingConstants.Result = await IO.ReadFile(selectedFileName) ??
+                                             throw new InvalidOperationException("Unable to read file.");
 
             // Validate that the file has been read correctly
             if (FileProcessingConstants.Result.Length == 0)
-                throw new InvalidOperationException("The file is empty or cannot be read.");
+                throw new Exception("The file is empty or cannot be read.");
 
-            FileProcessingConstants.FileExtension = fileInfo.Extension.ToLower();
+            FileProcessingConstants.FileExtension = fileInfo.Extension.ToLower(CultureInfo.CurrentCulture);
             FileProcessingConstants.FileSize = (int)fileInfo.Length;
 
             FileSizeNumLbl.Text = $"{fileInfo.Length:#,0} bytes";
@@ -76,17 +77,12 @@ public partial class Encryption : UserControl
         }
         catch (UnauthorizedAccessException ex)
         {
-            MessageBox.Show("Access to the file was denied.", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
-            ErrorLogging.ErrorLog(ex);
-        }
-        catch (ArgumentException ex)
-        {
             MessageBox.Show(ex.Message, "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
             ErrorLogging.ErrorLog(ex);
         }
         catch (Exception ex)
         {
-            MessageBox.Show("An error occurred while opening the file.", "Error", MessageBoxButtons.OK,
+            MessageBox.Show(ex.Message, "Error", MessageBoxButtons.OK,
                 MessageBoxIcon.Error);
             ErrorLogging.ErrorLog(ex);
         }
@@ -102,7 +98,7 @@ public partial class Encryption : UserControl
     {
         try
         {
-            if (string.IsNullOrWhiteSpace(Authentication.CurrentLoggedInUser))
+            if (string.IsNullOrEmpty(UserFileManager.CurrentLoggedInUser))
                 throw new InvalidOperationException("No user is currently logged in.");
 
             if (!FileProcessingConstants.FileOpened)
@@ -111,7 +107,7 @@ public partial class Encryption : UserControl
             using var saveFileDialog = new SaveFileDialog();
 
             // Determine file extension and filter
-            string extension;
+            string? extension;
             string filter;
 
             if (FileProcessingConstants.IsEncrypted)
@@ -123,10 +119,10 @@ public partial class Encryption : UserControl
             {
                 // Use original extension from decrypted metadata if available
                 extension = FileProcessingConstants.OriginalExtension;
-                if (string.IsNullOrWhiteSpace(extension) || !extension.StartsWith("."))
+                if (!string.IsNullOrWhiteSpace(extension) && extension.StartsWith("."))
                     extension = $".{FileProcessingConstants.FileExtension}";
 
-                var extNoDot = extension.TrimStart('.');
+                var extNoDot = extension!.TrimStart('.');
                 filter = $"{extNoDot.ToUpper()} files (*{extension})|*{extension}|All Files (*.*)|*.*";
             }
 
@@ -153,8 +149,7 @@ public partial class Encryption : UserControl
             if (FileProcessingConstants.Result.Length == 0)
                 throw new InvalidOperationException("There is no data to write to the file.");
 
-            await using var fs = new FileStream(selectedFileName, FileMode.Create, FileAccess.Write);
-            await fs.WriteAsync(FileProcessingConstants.Result.AsMemory(0, FileProcessingConstants.Result.Length));
+            await IO.WriteFile(selectedFileName, FileProcessingConstants.Result);
 
             FileOutputLbl.Text = "File saved successfully.";
             FileOutputLbl.ForeColor = Color.LimeGreen;
@@ -171,7 +166,7 @@ public partial class Encryption : UserControl
         }
         catch (Exception ex)
         {
-            MessageBox.Show("An error occurred while saving the file.", "Error", MessageBoxButtons.OK,
+            MessageBox.Show(ex.Message, "Error", MessageBoxButtons.OK,
                 MessageBoxIcon.Error);
             ErrorLogging.ErrorLog(ex);
         }
@@ -182,15 +177,38 @@ public partial class Encryption : UserControl
         }
     }
 
+    /// <summary>
+    /// Handles the decryption of an encrypted file when the Decrypt button is clicked.
+    /// </summary>
+    /// <param name="sender">The source of the event (Decrypt button).</param>
+    /// <param name="e">Event data associated with the button click.</param>
+    /// <remarks>
+    /// Performs several validations before decrypting the file, including checking whether a file is loaded, 
+    /// whether it has already been decrypted, and whether a user is logged in.
+    /// 
+    /// If decryption is successful, updates the UI and internal flags accordingly. 
+    /// Displays informative message boxes to guide the user. 
+    /// Logs errors with full exception details for debugging.
+    /// </remarks>
+    /// <exception cref="InvalidOperationException">
+    /// Thrown when no user is logged in, no file is opened, or the file has already been decrypted.
+    /// </exception>
+    /// <exception cref="FileNotFoundException">
+    /// Thrown when the file path is null or empty.
+    /// </exception>
+    /// <exception cref="CryptographicException">
+    /// Thrown when decryption fails due to cryptographic issues, such as an incorrect password.
+    /// </exception>
+    /// <exception cref="Exception">
+    /// Thrown when the encrypted file is corrupted or metadata is missing.
+    /// </exception>
     private async void DecryptBtn_Click(object sender, EventArgs e)
     {
-        byte[] customPassword = null;
-        byte[] confirmPassword = null;
-        byte[] decryptedPassword = null;
-        GCHandle? handle = null;
-
         try
         {
+            if (string.IsNullOrEmpty(UserFileManager.CurrentLoggedInUser))
+                throw new InvalidOperationException("No user is currently logged in.");
+
             MessageBox.Show(
                 "Do NOT close the program while loading. This may cause corrupted data that is NOT recoverable. " +
                 "If using a custom password to decrypt, you MUST enter the same password used during encryption.",
@@ -198,84 +216,64 @@ public partial class Encryption : UserControl
 
             DecryptBtn.Enabled = false;
 
-            if (string.IsNullOrEmpty(Authentication.CurrentLoggedInUser))
-                throw new Exception("No user is currently logged in.");
-
             if (!FileProcessingConstants.FileOpened)
-                throw new Exception("No file is opened.");
+                throw new InvalidOperationException("No file is currently opened. Please open a file first.");
 
             if (string.IsNullOrEmpty(FileProcessingConstants.LoadedFile))
-                throw new Exception("No file is selected.");
+                throw new FileNotFoundException("No file is selected or the selected file path is empty.");
 
             if (FileProcessingConstants.IsDecrypted)
-                throw new Exception("File is already decrypted. Unable to decrypt again." +
-                                    "Either encrypt the file or export file.");
+                throw new InvalidOperationException(
+                    "The file has already been decrypted. You cannot decrypt it again. Please either encrypt or export it.");
 
             DecryptingAnimation();
 
             var data = FileProcessingConstants.Result;
-            var signature = FileSignature;
+            var signature = CryptoConstants.FileSignature;
             var saltSize = CryptoConstants.SaltSize;
-            var expectedHeaderLength = signature.Length + saltSize;
+            var headerLength = signature.Length + saltSize + 1; // signature + salt + extension length byte
 
-            if (data.Length < expectedHeaderLength)
+            if (data.Length < headerLength)
                 throw new Exception("Encrypted file is corrupted or missing required metadata.");
 
-            // Validate signature
+            // Validate file signature
             var actualSignature = data.AsSpan(0, signature.Length);
             if (!actualSignature.SequenceEqual(signature))
                 throw new Exception("Invalid file signature. This file may not be a valid encrypted file.");
 
-            // Extract Argon2 salt
+            // Extract HKDF salt for file key derivation
             var saltStart = signature.Length;
-            var saltEnd = saltStart + saltSize;
-            var argonSalt = data.AsSpan(saltStart, saltSize).ToArray();
+            var fileHkdfSalt = data.AsSpan(saltStart, saltSize).ToArray();
 
-            // Extract extension length
-            var extLenIndex = saltEnd;
+            // Read extension length
+            var extLenIndex = saltStart + saltSize;
             var extensionLength = data[extLenIndex];
 
-            // Extract extension bytes
+            // Ensure there's enough data for extension bytes
+            if (data.Length < extLenIndex + 1 + extensionLength)
+                throw new Exception("File is missing extension metadata or is corrupted.");
+
             var extBytesIndex = extLenIndex + 1;
             var extensionBytes = data.AsSpan(extBytesIndex, extensionLength).ToArray();
             var originalExtension = Encoding.UTF8.GetString(extensionBytes);
-
-            // Store the extension for later use
             FileProcessingConstants.OriginalExtension = originalExtension;
 
             // Extract encrypted content
-            var encryptedStartIndex = extBytesIndex + extensionLength;
-            var encryptedContent = data.AsSpan(encryptedStartIndex).ToArray();
-            FileProcessingConstants.Result = encryptedContent;
+            var encryptedStart = extBytesIndex + extensionLength;
+            var encryptedContent = data.AsSpan(encryptedStart).ToArray();
 
-            // Decrypt stored login password
-            decryptedPassword = ProtectedData.Unprotect(
-                CryptoConstants.SecurePassword,
-                CryptoConstants.SecurePasswordSalt,
-                DataProtectionScope.CurrentUser);
+            // Derive the file key using MasterKey + extracted salt
+            var fileKey = Crypto.HKDF.HkdfDerivePinned(MasterKey, fileHkdfSalt, "file key"u8.ToArray(),
+                CryptoConstants.KeySize);
 
-            handle = GCHandle.Alloc(decryptedPassword, GCHandleType.Pinned);
+            // Decrypt using the derived file key
+            var decryptedFile = await DecryptFile(encryptedContent, fileKey, fileHkdfSalt);
 
-            var decryptedFile = await DecryptFile(
-                Authentication.CurrentLoggedInUser,
-                FileProcessingConstants.Result,
-                decryptedPassword,
-                argonSalt);
+            await Task.Delay(3000, _decryptAnimationSource.Token);
+            await ResetDecryptAnimationTokenAsync();
 
             if (decryptedFile.Length == 0)
-                throw new Exception("There was an error while decrypting.");
-
-            // Re-protect password
-            var encryptedPassword = ProtectedData.Protect(
-                decryptedPassword,
-                CryptoConstants.SecurePasswordSalt,
-                DataProtectionScope.CurrentUser);
-
-            CryptoConstants.SecurePassword = encryptedPassword;
-
-            await _decryptAnimationSource.CancelAsync();
-            if (_decryptAnimationSource.IsCancellationRequested)
-                _decryptAnimationSource = new CancellationTokenSource();
+                throw new Exception("Decryption failed: resulting file is empty or corrupted.");
 
             FileProcessingConstants.Result = decryptedFile;
 
@@ -288,233 +286,407 @@ public partial class Encryption : UserControl
 
             GC.Collect(GC.MaxGeneration, GCCollectionMode.Aggressive, true, true);
 
-            var size = (long)FileProcessingConstants.Result.Length;
-            FileSizeNumLbl.Text = $"{size:#,0} bytes";
-
+            FileSizeNumLbl.Text = $"{FileProcessingConstants.Result.Length:#,0} bytes";
             FileOutputLbl.Text = "Idle...";
             FileOutputLbl.ForeColor = Color.WhiteSmoke;
+
             FileProcessingConstants.IsEncrypted = false;
             FileProcessingConstants.IsDecrypted = true;
+
+            // Clear sensitive memory
+            CryptoUtilities.ClearMemoryNative(fileKey, fileHkdfSalt);
         }
         catch (OperationCanceledException)
         {
-            // Ignore
+            // Ignored
         }
-        catch (Exception ex)
+        catch (CryptographicException ex)
         {
-            CustomPasswordTextBox.Clear();
-            ConfirmPassword.Clear();
-
-            CryptoUtilities.ClearMemory(customPassword);
-            CryptoUtilities.ClearMemory(confirmPassword);
+            await ResetDecryptAnimationTokenAsync();
 
             FileOutputLbl.Text = "Error decrypting file.";
             FileOutputLbl.ForeColor = Color.Red;
 
-            await _decryptAnimationSource.CancelAsync();
-            if (_decryptAnimationSource.IsCancellationRequested)
-                _decryptAnimationSource = new CancellationTokenSource();
-
-            MessageBox.Show(ex.Message, "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            MessageBox.Show("Unable to load vault. Recheck your password and vault file.", "Error",
+                MessageBoxButtons.OK, MessageBoxIcon.Error);
 
             FileOutputLbl.Text = "Idle...";
             FileOutputLbl.ForeColor = Color.WhiteSmoke;
+
+            FileProcessingConstants.IsDecrypted = false;
+            ErrorLogging.ErrorLog(ex);
+        }
+        catch (FileNotFoundException ex)
+        {
+            await ResetDecryptAnimationTokenAsync();
+
+            FileOutputLbl.Text = "Error decrypting file.";
+            FileOutputLbl.ForeColor = Color.Red;
+
+            MessageBox.Show("No file is selected. Or the file path was empty.", "Error", MessageBoxButtons.OK,
+                MessageBoxIcon.Error);
+
+            FileOutputLbl.Text = "Idle...";
+            FileOutputLbl.ForeColor = Color.WhiteSmoke;
+
+            FileProcessingConstants.IsDecrypted = false;
+            ErrorLogging.ErrorLog(ex);
+        }
+        catch (InvalidOperationException ex)
+        {
+            await ResetDecryptAnimationTokenAsync();
+
+            FileOutputLbl.Text = "Error decrypting file.";
+            FileOutputLbl.ForeColor = Color.Red;
+
+            MessageBox.Show(
+                "An invalid operation error has occured. Make sure you have a file opened, and that it hasn't already been decrypted.",
+                "Error", MessageBoxButtons.OK,
+                MessageBoxIcon.Error);
+
+            FileOutputLbl.Text = "Idle...";
+            FileOutputLbl.ForeColor = Color.WhiteSmoke;
+
+            FileProcessingConstants.IsDecrypted = false;
+            ErrorLogging.ErrorLog(ex);
+        }
+        catch (Exception ex)
+        {
+            await ResetDecryptAnimationTokenAsync();
+
+            FileOutputLbl.Text = "Error decrypting file.";
+            FileOutputLbl.ForeColor = Color.Red;
+
+            MessageBox.Show("An unexpected error has occured.", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+
+            FileOutputLbl.Text = "Idle...";
+            FileOutputLbl.ForeColor = Color.WhiteSmoke;
+
             FileProcessingConstants.IsDecrypted = false;
             ErrorLogging.ErrorLog(ex);
         }
         finally
         {
-            if (handle is { IsAllocated: true })
-                handle.Value.Free();
-
-            if (customPassword != null) CryptoUtilities.ClearMemory(customPassword);
-            if (confirmPassword != null) CryptoUtilities.ClearMemory(confirmPassword);
-            if (decryptedPassword != null) CryptoUtilities.ClearMemory(decryptedPassword);
             DecryptBtn.Enabled = true;
         }
     }
 
+    private static async Task ResetDecryptAnimationTokenAsync()
+    {
+        try
+        {
+            if (_decryptAnimationSource != null)
+            {
+                await _decryptAnimationSource.CancelAsync();
+                _decryptAnimationSource.Dispose();
+            }
+        }
+        catch
+        {
+            /* Ignore cleanup exceptions */
+        }
+        finally
+        {
+            _decryptAnimationSource = new CancellationTokenSource();
+        }
+    }
+
+    /// <summary>
+    /// Checks the header of a file to determine if it has already been encrypted.
+    /// </summary>
+    /// <param name="file">The full path to the file to check.</param>
+    /// <returns>A task that represents the asynchronous operation.</returns>
+    /// <remarks>
+    /// This method opens the specified file and reads its initial bytes to compare them against the expected file signature.
+    /// If the signature matches, it indicates the file has already been encrypted, and an <see cref="Exception"/> is thrown.
+    /// </remarks>
+    /// <exception cref="IOException">
+    /// Thrown if the method fails to read the full header from the file.
+    /// </exception>
+    /// <exception cref="Exception">
+    /// Thrown if the file appears to already be encrypted based on the signature.
+    /// </exception>
+    /// <example>
+    /// <code>
+    /// try
+    /// {
+    ///     await CheckHeader("C:\\path\\to\\file.dat");
+    /// }
+    /// catch (Exception ex)
+    /// {
+    ///     MessageBox.Show(ex.Message);
+    /// }
+    /// </code>
+    /// </example>
+
+    private static async void CheckHeader(string file)
+    {
+        await using var fs = new FileStream(file, FileMode.Open, FileAccess.Read, FileShare.Read);
+        if (fs.Length >= CryptoConstants.FileSignature.Length)
+        {
+            var header = new byte[CryptoConstants.FileSignature.Length];
+            var bytesRead = await fs.ReadAsync(header);
+
+            if (bytesRead != header.Length)
+                throw new IOException("Failed to read the full file header.");
+
+            if (header.SequenceEqual(CryptoConstants.FileSignature))
+                throw new Exception("File is already encrypted. Unable to encrypt again. Please export the file.");
+        }
+    }
+
+    /// <summary>
+    /// Handles the click event for the Encrypt button and performs encryption on the currently loaded file.
+    /// </summary>
+    /// <param name="sender">The source of the event, typically the Encrypt button.</param>
+    /// <param name="e">The event data associated with the button click.</param>
+    /// <remarks>
+    /// This method validates that a user is logged in and a file is selected, then performs file encryption using 
+    /// a derived key and a random salt. It embeds metadata such as the original file extension into the encrypted output.
+    /// 
+    /// On success, it updates the UI with a success message and sets encryption state flags. On failure, it provides 
+    /// user-friendly error messages depending on the specific exception caught. Sensitive data is cleared from memory
+    /// and the UI is reset regardless of success or failure.
+    /// </remarks>
+    /// <exception cref="InvalidOperationException">
+    /// Thrown when no user is logged in, no file is opened, or the file has already been encrypted.
+    /// </exception>
+    /// <exception cref="FileNotFoundException">
+    /// Thrown when the selected file path is null, empty, or the file cannot be found.
+    /// </exception>
+    /// <exception cref="CryptographicException">
+    /// Thrown when a cryptographic error occurs during key derivation or encryption.
+    /// </exception>
+    /// <exception cref="CryptographicOperationException">
+    /// Thrown when encryption fails or the output is invalid.
+    /// </exception>
+    /// <exception cref="Exception">
+    /// Thrown when an unexpected error occurs during the encryption process.
+    /// </exception>
+
     private async void EncryptBtn_Click(object sender, EventArgs e)
     {
-        byte[] customPassword = null;
-        byte[] confirmPassword = null;
-        byte[] decryptedPassword = null;
-        GCHandle? handle = null;
+        byte[] fileKey = [];
+        byte[] fileHkdfSalt = [];
 
         try
         {
+            if (string.IsNullOrEmpty(UserFileManager.CurrentLoggedInUser))
+                throw new InvalidOperationException("No user is currently logged in.");
+
             MessageBox.Show(
-                "Do NOT close the program while loading. This may cause corrupted data that is NOT recoverable. " +
-                "If using a custom password to encrypt with, MAKE SURE YOU REMEMBER THE PASSWORD! You will NOT be able to " +
-                "decrypt the file without the password. It is separate than the password you use to login with.",
-                "Info",
-                MessageBoxButtons.OK, MessageBoxIcon.Exclamation);
+                "Do NOT close the program while loading. This may cause corrupted data that is NOT recoverable.\n\n" +
+                "If using a custom password to encrypt with, MAKE SURE YOU REMEMBER THE PASSWORD!\n" +
+                "You will NOT be able to decrypt the file without it. It is separate from your login password.",
+                "Warning", MessageBoxButtons.OK, MessageBoxIcon.Exclamation);
 
             EncryptBtn.Enabled = false;
 
-
-            if (string.IsNullOrEmpty(Authentication.CurrentLoggedInUser))
-                throw new Exception("No user is currently logged in.");
-
             if (!FileProcessingConstants.FileOpened)
-                throw new Exception("No file is opened.");
+                throw new InvalidOperationException("No file is opened. Please open a file before encrypting.");
 
             if (string.IsNullOrEmpty(FileProcessingConstants.LoadedFile))
-                return;
+                throw new FileNotFoundException("No file is selected or the file path is empty.");
 
             if (FileProcessingConstants.IsEncrypted)
-                throw new Exception("File is already encrypted. Unable to encrypt again." +
-                                    " Either decrypt the file or export file.");
+                throw new InvalidOperationException("File is already encrypted. Please decrypt or export it first.");
 
-            // Early check: Is file already encrypted based on header?
-            await using (var fs = new FileStream(FileProcessingConstants.LoadedFile, FileMode.Open, FileAccess.Read,
-                             FileShare.Read))
-            {
-                if (fs.Length >= FileSignature.Length)
-                {
-                    var header = new byte[FileSignature.Length];
-                    var bytesRead = fs.Read(header, 0, FileSignature.Length);
-
-                    if (bytesRead != FileSignature.Length)
-                        throw new IOException("Failed to read the full file header.");
-
-                    if (header.SequenceEqual(FileSignature))
-                        throw new Exception(
-                            "File is already encrypted. Unable to encrypt again. You will need to export the file.");
-                }
-            }
+            CheckHeader(FileProcessingConstants.LoadedFile);
 
             EncryptingAnimation();
 
-            decryptedPassword = ProtectedData.Unprotect(
-                CryptoConstants.SecurePassword,
-                CryptoConstants.SecurePasswordSalt,
-                DataProtectionScope.CurrentUser);
+            var input = await IO.ReadFile(FileProcessingConstants.LoadedFile);
+            fileHkdfSalt = CryptoUtilities.RndByteSized(CryptoConstants.SaltSize);
 
-            handle = GCHandle.Alloc(decryptedPassword, GCHandleType.Pinned);
+            fileKey = Crypto.HKDF.HkdfDerivePinned(
+                MasterKey, fileHkdfSalt, "file key"u8.ToArray(), CryptoConstants.KeySize);
 
-            var input = await File.ReadAllBytesAsync(FileProcessingConstants.LoadedFile);
-            var argonSalt = CryptoUtilities.RndByteSized(CryptoConstants.SaltSize);
+            if (input != null)
+            {
+                var encryptedFile = await EncryptFile(input, fileKey, fileHkdfSalt);
 
-            var encryptedFile = await EncryptFile(
-                Authentication.CurrentLoggedInUser,
-                input,
-                decryptedPassword,
-                argonSalt);
+                CryptoUtilities.ClearMemoryNative(input);
 
-            if (encryptedFile.Length == 0)
-                throw new Exception("There was an error while encrypting.");
+                if (encryptedFile.Length == 0)
+                    throw new CryptographicException("Encryption failed. The resulting file was empty.");
 
-            var encryptedPassword = ProtectedData.Protect(
-                decryptedPassword,
-                CryptoConstants.SecurePasswordSalt,
-                DataProtectionScope.CurrentUser);
+                var originalExtension = Path.GetExtension(FileProcessingConstants.LoadedFile);
+                var extensionBytes = Encoding.UTF8.GetBytes(originalExtension);
 
-            CryptoConstants.SecurePassword = encryptedPassword;
+                if (extensionBytes.Length > 255)
+                    throw new InvalidOperationException("File extension is too long to store.");
 
-            // --- New: Embed original extension ---
-            var originalExtension = Path.GetExtension(FileProcessingConstants.LoadedFile) ?? string.Empty;
-            var extensionBytes = Encoding.UTF8.GetBytes(originalExtension);
-            if (extensionBytes.Length > 255)
-                throw new Exception("File extension too long to store.");
-            var extensionLength = (byte)extensionBytes.Length;
+                byte extensionLength = (byte)extensionBytes.Length;
 
-            // Final format: [FileSignature][Salt][ExtensionLength][ExtensionBytes][EncryptedContent]
-            encryptedFile =
-            [
-                .. FileSignature,
-                .. argonSalt,
+                // Final file format: [Signature][Salt][ExtLen][Ext][Encrypted]
+                encryptedFile =
+                [
+                    ..CryptoConstants.FileSignature,
+                ..fileHkdfSalt,
                 extensionLength,
-                .. extensionBytes,
-                .. encryptedFile
-            ];
+                ..extensionBytes,
+                ..encryptedFile
+                ];
 
-            await _encryptAnimationSource.CancelAsync();
-            _encryptAnimationSource.Dispose();
-            _encryptAnimationSource = new CancellationTokenSource();
+                await Task.Delay(3000, _encryptAnimationSource.Token);
+                await ResetEncryptAnimationTokenAsync();
 
-            FileProcessingConstants.Result = encryptedFile;
+                FileProcessingConstants.Result = encryptedFile;
+            }
 
             FileOutputLbl.Text = "File encrypted.";
             FileOutputLbl.ForeColor = Color.LimeGreen;
 
             MessageBox.Show(
-                "File was encrypted successfully. You may now export the encrypted file. To decrypt, you will open the encrypted file.",
+                "File was encrypted successfully. You may now export it.\nTo decrypt, open the encrypted file later.",
                 "Success", MessageBoxButtons.OK, MessageBoxIcon.Information);
 
             GC.Collect(GC.MaxGeneration, GCCollectionMode.Aggressive, true, true);
 
-            var size = (long)FileProcessingConstants.Result.Length;
-            FileSizeNumLbl.Text = $"{size:#,0} bytes";
-
+            FileSizeNumLbl.Text = $"{FileProcessingConstants.Result.Length:#,0} bytes";
             FileOutputLbl.Text = "Idle...";
             FileOutputLbl.ForeColor = Color.WhiteSmoke;
+
             FileProcessingConstants.IsEncrypted = true;
             FileProcessingConstants.IsDecrypted = false;
         }
         catch (OperationCanceledException)
         {
-            // Ignore
+            // Operation was canceled, no action needed.
         }
-        catch (Exception ex)
+        catch (InvalidOperationException ex)
         {
-            CustomPasswordTextBox.Clear();
-            ConfirmPassword.Clear();
-
-            await _encryptAnimationSource.CancelAsync();
-            _encryptAnimationSource.Dispose();
-            _encryptAnimationSource = new CancellationTokenSource();
+            await ResetEncryptAnimationTokenAsync();
 
             FileOutputLbl.Text = "Error encrypting file.";
             FileOutputLbl.ForeColor = Color.Red;
 
-            MessageBox.Show(ex.Message, "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            MessageBox.Show(ex.Message, "Invalid Operation", MessageBoxButtons.OK, MessageBoxIcon.Warning);
 
-            FileOutputLbl.Text = "Idle...";
-            FileOutputLbl.ForeColor = Color.WhiteSmoke;
+            FileProcessingConstants.IsEncrypted = false;
+            ErrorLogging.ErrorLog(ex);
+        }
+        catch (FileNotFoundException ex)
+        {
+            await ResetEncryptAnimationTokenAsync();
+
+            FileOutputLbl.Text = "Error encrypting file.";
+            FileOutputLbl.ForeColor = Color.Red;
+
+            MessageBox.Show("The file was not found. Please verify the file path.", "File Error",
+                MessageBoxButtons.OK, MessageBoxIcon.Error);
+
+            FileProcessingConstants.IsEncrypted = false;
+            ErrorLogging.ErrorLog(ex);
+        }
+        catch (CryptographicException ex)
+        {
+            await ResetEncryptAnimationTokenAsync();
+
+            FileOutputLbl.Text = "Error encrypting file.";
+            FileOutputLbl.ForeColor = Color.Red;
+
+            MessageBox.Show("An error has occured when trying to encrypt the file.", "Encryption Error",
+                MessageBoxButtons.OK, MessageBoxIcon.Error);
+
+            FileProcessingConstants.IsEncrypted = false;
+            ErrorLogging.ErrorLog(ex);
+        }
+        catch (Exception ex)
+        {
+            await ResetEncryptAnimationTokenAsync();
+
+            FileOutputLbl.Text = "Error encrypting file.";
+            FileOutputLbl.ForeColor = Color.Red;
+
+            MessageBox.Show("An unexpected error occurred during encryption.", "Error",
+                MessageBoxButtons.OK, MessageBoxIcon.Error);
+
             FileProcessingConstants.IsEncrypted = false;
             ErrorLogging.ErrorLog(ex);
         }
         finally
         {
-            if (handle is { IsAllocated: true })
-                handle.Value.Free();
-
-            if (customPassword != null) CryptoUtilities.ClearMemory(customPassword);
-            if (confirmPassword != null) CryptoUtilities.ClearMemory(confirmPassword);
-            if (decryptedPassword != null) CryptoUtilities.ClearMemory(decryptedPassword);
+            CryptoUtilities.ClearMemoryNative(fileKey, fileHkdfSalt);
             EncryptBtn.Enabled = true;
         }
     }
 
 
-    private void CustomPasswordCheckBox_CheckedChanged(object sender, EventArgs e)
+    // Utility method to reset the animation token
+    private static async Task ResetEncryptAnimationTokenAsync()
     {
-        if (CustomPasswordCheckBox.Checked)
+        try
         {
-            CustomPasswordTextBox.Enabled = true;
-            ConfirmPassword.Enabled = true;
+            if (_encryptAnimationSource != null)
+            {
+                await _encryptAnimationSource.CancelAsync();
+                _encryptAnimationSource.Dispose();
+            }
         }
-        else
+        catch
         {
-            CustomPasswordTextBox.Enabled = false;
-            ConfirmPassword.Enabled = false;
+            /* Ignore cleanup issues */
+        }
+        finally
+        {
+            _encryptAnimationSource = new CancellationTokenSource();
         }
     }
 
+    private void FileEncryptDecryptBox_Enter(object sender, EventArgs e)
+    {
+    }
+
     /// <summary>
-    ///     Represents static fields and constants used for file processing and UI interactions.
+    /// Represents static fields and constants used for managing file processing state and UI interactions.
     /// </summary>
     private static class FileProcessingConstants
     {
-        public const int MaximumFileSize = 1_000_000_000;
+        /// <summary>
+        /// Gets the maximum allowed file size for processing, in bytes (2,000,000,000 bytes).
+        /// </summary>
+        public const int MaximumFileSize = 2_000_000_000;
+
+        /// <summary>
+        /// Gets or sets the currently loaded file path as a string.
+        /// </summary>
         public static string LoadedFile = string.Empty;
+
+        /// <summary>
+        /// Gets or sets the result of the file processing, stored as a byte array.
+        /// </summary>
         public static byte[] Result = [];
+
+        /// <summary>
+        /// Gets or sets the current file extension as a string.
+        /// </summary>
         public static string FileExtension = string.Empty;
+
+        /// <summary>
+        /// Indicates whether the currently loaded file is encrypted.
+        /// </summary>
         public static bool IsEncrypted;
+
+        /// <summary>
+        /// Indicates whether the currently loaded file is decrypted.
+        /// </summary>
         public static bool IsDecrypted;
+
+        /// <summary>
+        /// Gets or sets a value indicating whether a file has been opened.
+        /// </summary>
         public static bool FileOpened { get; set; }
+
+        /// <summary>
+        /// Gets or sets the size of the currently loaded file in bytes.
+        /// </summary>
         public static long FileSize { get; set; }
-        public static string OriginalExtension { get; set; }
+
+        /// <summary>
+        /// Gets or sets the original extension of the loaded file, if any.
+        /// </summary>
+        public static string? OriginalExtension { get; set; }
     }
+
 }

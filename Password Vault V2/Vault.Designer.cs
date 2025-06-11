@@ -274,7 +274,7 @@ namespace Password_Vault_V2
         #endregion
         private Label outputLbl;
         private Label statusLbl;
-        private Button SaveVaultBtn;
+        public Button SaveVaultBtn;
         private Button AddRowBtn;
         private Button DeleteRowBtn;
         public GroupBox vaultBox;

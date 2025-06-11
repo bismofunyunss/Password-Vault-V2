@@ -33,13 +33,6 @@ namespace Password_Vault_V2
             FileEncryptDecryptBox = new GroupBox();
             pictureBox1 = new PictureBox();
             WelcomeLabel = new Label();
-            PasswordBox = new GroupBox();
-            ViewPasswordsCheckbox = new CheckBox();
-            confirmPasswordLbl = new Label();
-            ConfirmPassword = new TextBox();
-            passLbl = new Label();
-            CustomPasswordTextBox = new TextBox();
-            CustomPasswordCheckBox = new CheckBox();
             FileSizeNumLbl = new Label();
             FileSizeLbl = new Label();
             FileOutputLbl = new Label();
@@ -50,7 +43,6 @@ namespace Password_Vault_V2
             ImportFileBtn = new Button();
             FileEncryptDecryptBox.SuspendLayout();
             ((ISupportInitialize)pictureBox1).BeginInit();
-            PasswordBox.SuspendLayout();
             SuspendLayout();
             // 
             // FileEncryptDecryptBox
@@ -58,7 +50,6 @@ namespace Password_Vault_V2
             FileEncryptDecryptBox.BackColor = Color.FromArgb(30, 30, 30);
             FileEncryptDecryptBox.Controls.Add(pictureBox1);
             FileEncryptDecryptBox.Controls.Add(WelcomeLabel);
-            FileEncryptDecryptBox.Controls.Add(PasswordBox);
             FileEncryptDecryptBox.Controls.Add(FileSizeNumLbl);
             FileEncryptDecryptBox.Controls.Add(FileSizeLbl);
             FileEncryptDecryptBox.Controls.Add(FileOutputLbl);
@@ -71,15 +62,16 @@ namespace Password_Vault_V2
             FileEncryptDecryptBox.ForeColor = Color.WhiteSmoke;
             FileEncryptDecryptBox.Location = new Point(3, 3);
             FileEncryptDecryptBox.Name = "FileEncryptDecryptBox";
-            FileEncryptDecryptBox.Size = new Size(930, 408);
+            FileEncryptDecryptBox.Size = new Size(954, 292);
             FileEncryptDecryptBox.TabIndex = 10;
             FileEncryptDecryptBox.TabStop = false;
             FileEncryptDecryptBox.Text = "File Encryptor / Decryptor";
+            FileEncryptDecryptBox.Enter += FileEncryptDecryptBox_Enter;
             // 
             // pictureBox1
             // 
             pictureBox1.Image = Properties.Resources.sha_256;
-            pictureBox1.Location = new Point(786, 263);
+            pictureBox1.Location = new Point(786, 132);
             pictureBox1.Name = "pictureBox1";
             pictureBox1.Size = new Size(135, 134);
             pictureBox1.TabIndex = 21;
@@ -90,94 +82,17 @@ namespace Password_Vault_V2
             WelcomeLabel.AutoSize = true;
             WelcomeLabel.Font = new Font("Century Gothic", 11F);
             WelcomeLabel.ForeColor = Color.White;
-            WelcomeLabel.Location = new Point(6, 326);
+            WelcomeLabel.Location = new Point(6, 191);
             WelcomeLabel.Name = "WelcomeLabel";
             WelcomeLabel.Size = new Size(169, 25);
             WelcomeLabel.TabIndex = 20;
             WelcomeLabel.Text = "Welcome, null";
             // 
-            // PasswordBox
-            // 
-            PasswordBox.Controls.Add(ViewPasswordsCheckbox);
-            PasswordBox.Controls.Add(confirmPasswordLbl);
-            PasswordBox.Controls.Add(ConfirmPassword);
-            PasswordBox.Controls.Add(passLbl);
-            PasswordBox.Controls.Add(CustomPasswordTextBox);
-            PasswordBox.Controls.Add(CustomPasswordCheckBox);
-            PasswordBox.Font = new Font("Century Gothic", 11F);
-            PasswordBox.ForeColor = Color.WhiteSmoke;
-            PasswordBox.Location = new Point(7, 132);
-            PasswordBox.Name = "PasswordBox";
-            PasswordBox.Size = new Size(613, 186);
-            PasswordBox.TabIndex = 19;
-            PasswordBox.TabStop = false;
-            PasswordBox.Text = "Custom Password For Encryption / Decryption";
-            // 
-            // ViewPasswordsCheckbox
-            // 
-            ViewPasswordsCheckbox.AutoSize = true;
-            ViewPasswordsCheckbox.Location = new Point(321, 99);
-            ViewPasswordsCheckbox.Name = "ViewPasswordsCheckbox";
-            ViewPasswordsCheckbox.Size = new Size(213, 29);
-            ViewPasswordsCheckbox.TabIndex = 8;
-            ViewPasswordsCheckbox.Text = "Show Passwords";
-            ViewPasswordsCheckbox.UseVisualStyleBackColor = true;
-            // 
-            // confirmPasswordLbl
-            // 
-            confirmPasswordLbl.AutoSize = true;
-            confirmPasswordLbl.Location = new Point(10, 103);
-            confirmPasswordLbl.Name = "confirmPasswordLbl";
-            confirmPasswordLbl.Size = new Size(205, 25);
-            confirmPasswordLbl.TabIndex = 25;
-            confirmPasswordLbl.Text = "Confirm Password";
-            // 
-            // ConfirmPassword
-            // 
-            ConfirmPassword.BackColor = Color.FromArgb(30, 30, 30);
-            ConfirmPassword.Font = new Font("Century Gothic", 11F);
-            ConfirmPassword.ForeColor = Color.White;
-            ConfirmPassword.Location = new Point(10, 131);
-            ConfirmPassword.Name = "ConfirmPassword";
-            ConfirmPassword.Size = new Size(305, 34);
-            ConfirmPassword.TabIndex = 6;
-            ConfirmPassword.UseSystemPasswordChar = true;
-            // 
-            // passLbl
-            // 
-            passLbl.AutoSize = true;
-            passLbl.Location = new Point(10, 39);
-            passLbl.Name = "passLbl";
-            passLbl.Size = new Size(114, 25);
-            passLbl.TabIndex = 23;
-            passLbl.Text = "Password";
-            // 
-            // CustomPasswordTextBox
-            // 
-            CustomPasswordTextBox.BackColor = Color.FromArgb(30, 30, 30);
-            CustomPasswordTextBox.Font = new Font("Century Gothic", 11F);
-            CustomPasswordTextBox.ForeColor = Color.White;
-            CustomPasswordTextBox.Location = new Point(10, 67);
-            CustomPasswordTextBox.Name = "CustomPasswordTextBox";
-            CustomPasswordTextBox.Size = new Size(305, 34);
-            CustomPasswordTextBox.TabIndex = 5;
-            CustomPasswordTextBox.UseSystemPasswordChar = true;
-            // 
-            // CustomPasswordCheckBox
-            // 
-            CustomPasswordCheckBox.AutoSize = true;
-            CustomPasswordCheckBox.Location = new Point(321, 67);
-            CustomPasswordCheckBox.Name = "CustomPasswordCheckBox";
-            CustomPasswordCheckBox.Size = new Size(274, 29);
-            CustomPasswordCheckBox.TabIndex = 7;
-            CustomPasswordCheckBox.Text = "Use Custom Password";
-            CustomPasswordCheckBox.UseVisualStyleBackColor = true;
-            // 
             // FileSizeNumLbl
             // 
             FileSizeNumLbl.AutoSize = true;
             FileSizeNumLbl.Font = new Font("Century Gothic", 11F);
-            FileSizeNumLbl.Location = new Point(121, 372);
+            FileSizeNumLbl.Location = new Point(121, 241);
             FileSizeNumLbl.Name = "FileSizeNumLbl";
             FileSizeNumLbl.Size = new Size(89, 25);
             FileSizeNumLbl.TabIndex = 16;
@@ -187,7 +102,7 @@ namespace Password_Vault_V2
             // 
             FileSizeLbl.AutoSize = true;
             FileSizeLbl.Font = new Font("Century Gothic", 11F);
-            FileSizeLbl.Location = new Point(6, 372);
+            FileSizeLbl.Location = new Point(6, 241);
             FileSizeLbl.Name = "FileSizeLbl";
             FileSizeLbl.Size = new Size(109, 25);
             FileSizeLbl.TabIndex = 15;
@@ -197,7 +112,7 @@ namespace Password_Vault_V2
             // 
             FileOutputLbl.AutoSize = true;
             FileOutputLbl.Font = new Font("Century Gothic", 11F);
-            FileOutputLbl.Location = new Point(91, 351);
+            FileOutputLbl.Location = new Point(104, 216);
             FileOutputLbl.Name = "FileOutputLbl";
             FileOutputLbl.Size = new Size(71, 25);
             FileOutputLbl.TabIndex = 14;
@@ -207,7 +122,7 @@ namespace Password_Vault_V2
             // 
             FileStatusLbl.AutoSize = true;
             FileStatusLbl.Font = new Font("Century Gothic", 11F);
-            FileStatusLbl.Location = new Point(7, 351);
+            FileStatusLbl.Location = new Point(6, 216);
             FileStatusLbl.Name = "FileStatusLbl";
             FileStatusLbl.Size = new Size(94, 25);
             FileStatusLbl.TabIndex = 13;
@@ -288,12 +203,10 @@ namespace Password_Vault_V2
             BackColor = Color.FromArgb(30, 30, 30);
             Controls.Add(FileEncryptDecryptBox);
             Name = "Encryption";
-            Size = new Size(936, 432);
+            Size = new Size(973, 308);
             FileEncryptDecryptBox.ResumeLayout(false);
             FileEncryptDecryptBox.PerformLayout();
             ((ISupportInitialize)pictureBox1).EndInit();
-            PasswordBox.ResumeLayout(false);
-            PasswordBox.PerformLayout();
             ResumeLayout(false);
         }
 
@@ -306,15 +219,8 @@ namespace Password_Vault_V2
         private Label FileStatusLbl;
         private Label FileSizeNumLbl;
         private Label FileSizeLbl;
-        private GroupBox PasswordBox;
-        private CheckBox ViewPasswordsCheckbox;
-        private Label confirmPasswordLbl;
-        private Label passLbl;
-        private CheckBox CustomPasswordCheckBox;
         public Label WelcomeLabel;
         private PictureBox pictureBox1;
-        public TextBox ConfirmPassword;
-        public TextBox CustomPasswordTextBox;
     }
     #endregion
 }

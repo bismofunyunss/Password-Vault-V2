@@ -2,7 +2,7 @@
 
 namespace Password_Vault_V2
 {
-    partial class FileHash
+    sealed partial class FileHash
     {
         /// <summary> 
         /// Required designer variable.

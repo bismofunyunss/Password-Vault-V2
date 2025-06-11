@@ -2,7 +2,7 @@
 
 namespace Password_Vault_V2
 {
-    partial class Register
+    sealed partial class Register
     {
         /// <summary> 
         /// Required designer variable.
@@ -27,7 +27,6 @@ namespace Password_Vault_V2
             CreateAccountBtn = new Button();
             statusLbl = new Label();
             outputLbl = new Label();
-            ShowPasswordCheckBox = new CheckBox();
             RegisterBox = new GroupBox();
             WelcomeLabel = new Label();
             RegisterBox.SuspendLayout();
@@ -72,8 +71,8 @@ namespace Password_Vault_V2
             passTxt.Name = "passTxt";
             passTxt.Size = new Size(438, 34);
             passTxt.TabIndex = 2;
-            passTxt.UseSystemPasswordChar = true;
-            passTxt.TextChanged += PassTxt_TextChanged;
+            passTxt.KeyDown += passTxt_KeyDown;
+            passTxt.KeyPress += passTxt_KeyPress;
             // 
             // confirmPassLbl
             // 
@@ -95,7 +94,8 @@ namespace Password_Vault_V2
             confirmPassTxt.Size = new Size(438, 34);
             confirmPassTxt.TabIndex = 3;
             confirmPassTxt.UseSystemPasswordChar = true;
-            confirmPassTxt.TextChanged += ConfirmPassTxt_TextChanged;
+            confirmPassTxt.KeyDown += confirmPassTxt_KeyDown;
+            confirmPassTxt.KeyPress += confirmPassTxt_KeyPress;
             // 
             // CreateAccountBtn
             // 
@@ -134,23 +134,10 @@ namespace Password_Vault_V2
             outputLbl.TabIndex = 9;
             outputLbl.Text = "Idle...";
             // 
-            // ShowPasswordCheckBox
-            // 
-            ShowPasswordCheckBox.AutoSize = true;
-            ShowPasswordCheckBox.Font = new Font("Century Gothic", 11F, FontStyle.Regular, GraphicsUnit.Point, 0);
-            ShowPasswordCheckBox.Location = new Point(234, 281);
-            ShowPasswordCheckBox.Name = "ShowPasswordCheckBox";
-            ShowPasswordCheckBox.Size = new Size(204, 29);
-            ShowPasswordCheckBox.TabIndex = 5;
-            ShowPasswordCheckBox.Text = "Show Password";
-            ShowPasswordCheckBox.UseVisualStyleBackColor = true;
-            ShowPasswordCheckBox.CheckedChanged += ShowPasswordCheckBox_CheckedChanged;
-            // 
             // RegisterBox
             // 
             RegisterBox.BackColor = Color.FromArgb(30, 30, 30);
             RegisterBox.Controls.Add(WelcomeLabel);
-            RegisterBox.Controls.Add(ShowPasswordCheckBox);
             RegisterBox.Controls.Add(outputLbl);
             RegisterBox.Controls.Add(statusLbl);
             RegisterBox.Controls.Add(CreateAccountBtn);
@@ -201,7 +188,6 @@ namespace Password_Vault_V2
         private TextBox confirmPassTxt;
         private Label statusLbl;
         private Label outputLbl;
-        private CheckBox ShowPasswordCheckBox;
         private GroupBox RegisterBox;
         public Label WelcomeLabel;
         public Button CreateAccountBtn;

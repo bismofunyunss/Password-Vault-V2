@@ -1,97 +1,180 @@
-﻿using System.Runtime.InteropServices;
-using System.Security.Cryptography;
-using System.Text.RegularExpressions;
+﻿using System.Security.Cryptography;
+using System.Text;
+using static Password_Vault_V2.Crypto;
 
 namespace Password_Vault_V2;
 
 public partial class Vault : UserControl
 {
-    private static CancellationTokenSource _tokenSource = new();
+    private static readonly CancellationTokenSource _tokenSource = new();
 
     public Vault()
     {
         InitializeComponent();
     }
 
-    private static CancellationToken Token => _tokenSource.Token;
-
+    /// <summary>
+    /// Enables the UI controls related to vault management.
+    /// </summary>
     private void EnableUi()
     {
         UiController.LogicMethods.EnableUi(AddRowBtn, DeleteRowBtn, SaveVaultBtn);
     }
 
+    /// <summary>
+    /// Disables the UI controls related to vault management.
+    /// </summary>
     private void DisableUi()
     {
         UiController.LogicMethods.DisableUi(AddRowBtn, DeleteRowBtn, SaveVaultBtn);
     }
 
-    private async void StartAnimation()
+    /// <summary>
+    /// Encrypts the vault data by deriving a vault key using a randomly generated salt with HKDF,
+    /// then encrypting the vault bytes and prepending the salt to the encrypted output.
+    /// </summary>
+    /// <param name="vaultBytes">The raw vault data bytes to encrypt.</param>
+    /// <param name="masterKey">The master key used for HKDF key derivation.</param>
+    /// <returns>A task that represents the asynchronous encryption operation.
+    /// The task result contains the encrypted vault data prefixed with the salt.</returns>
+    /// <exception cref="ArgumentNullException">Thrown if <paramref name="vaultBytes"/> or <paramref name="masterKey"/> is null.</exception>
+    private static async Task<byte[]> EncryptVaultWithSalt(byte[] vaultBytes, byte[] masterKey)
     {
-        await UiController.Animations.AnimateLabel(outputLbl, "Saving vault", Token);
+        var hkdfSalt = CryptoUtilities.RndByteSized(CryptoConstants.SaltSize);
+
+        // Derive vault key using the per-vault salt
+        var vaultKey = Crypto.HKDF.HkdfDerivePinned(masterKey, hkdfSalt, "vault key"u8.ToArray(), CryptoConstants.KeySize);
+
+        // Pass hkdfSalt to EncryptFile
+        var encryptedVault = await EncryptFile(vaultBytes, vaultKey, hkdfSalt);
+
+        // Prepend salt to encrypted vault
+        var result = hkdfSalt.Concat(encryptedVault).ToArray();
+
+        CryptoUtilities.ClearMemoryNative(vaultKey, vaultBytes, encryptedVault);
+
+        return result;
     }
 
     /// <summary>
-    ///     Asynchronously loads the user's vault data into the PassVault DataGridView.
+    /// Decrypts the encrypted vault data by extracting the salt, deriving the vault key with HKDF,
+    /// and decrypting the ciphertext.
     /// </summary>
+    /// <param name="encryptedVault">The encrypted vault data, with the salt prepended.</param>
+    /// <param name="masterKey">The master key used for HKDF key derivation.</param>
+    /// <returns>A task that represents the asynchronous decryption operation.
+    /// The task result contains the decrypted vault bytes.</returns>
+    /// <exception cref="InvalidOperationException">Thrown if the <paramref name="encryptedVault"/> is shorter than the expected salt size.</exception>
+    /// <exception cref="ArgumentNullException">Thrown if <paramref name="encryptedVault"/> or <paramref name="masterKey"/> is null.</exception>
+    private static async Task<byte[]> DecryptVaultWithSalt(byte[] encryptedVault, byte[] masterKey)
+    {
+        if (encryptedVault is { Length: < CryptoConstants.SaltSize })
+            throw new InvalidOperationException("Encrypted data is too short to contain a valid salt.");
+
+        var hkdfSalt = new byte[CryptoConstants.SaltSize];
+        Buffer.BlockCopy(encryptedVault, 0, hkdfSalt, 0, hkdfSalt.Length);
+
+        var ciphertextLength = encryptedVault.Length - hkdfSalt.Length;
+        var ciphertext = new byte[ciphertextLength];
+        Buffer.BlockCopy(encryptedVault, hkdfSalt.Length, ciphertext, 0, ciphertextLength);
+
+        // Derive vault key using same salt
+        var vaultKey = Crypto.HKDF.HkdfDerivePinned(masterKey, hkdfSalt, "vault key"u8.ToArray(), CryptoConstants.KeySize);
+
+        // Pass salt to DecryptFile
+        var decryptedBytes = await DecryptFile(ciphertext, vaultKey, hkdfSalt);
+
+        CryptoUtilities.ClearMemoryNative(vaultKey, ciphertext);
+
+        return decryptedBytes;
+    }
+
+    /// <summary>
+    /// Loads and decrypts the current user's vault file into the password vault UI table.
+    /// </summary>
+    /// <remarks>
+    /// This method reads the encrypted vault file from disk, decrypts it using the master key,
+    /// and populates the <c>PassVault</c> DataGridView with the decrypted data.
+    /// </remarks>
+    /// <exception cref="FileNotFoundException">Thrown if the vault file does not exist.</exception>
+    /// <exception cref="InvalidOperationException">Thrown if the vault cannot be decrypted or is empty.</exception>
+    /// <exception cref="CryptographicException">Thrown if a cryptographic operation fails during decryption.</exception>
+    /// <example>
+    /// <code>
+    /// LoadVault();
+    /// </code>
+    /// </example>
     public async void LoadVault()
     {
         try
         {
-            var filePath = Authentication.GetUserVault(Authentication.CurrentLoggedInUser);
+            var filePath = UserFileManager.GetUserVault(UserFileManager.CurrentLoggedInUser);
+            if (!File.Exists(filePath))
+                throw new FileNotFoundException("Vault file does not exist.");
 
-            if (File.Exists(filePath))
+            var encryptedVault = await IO.ReadFile(filePath);
+
+            var masterKey = MasterKey.GetKey();
+
+            var decryptedVaultBytes = await DecryptVaultWithSalt(encryptedVault, masterKey);
+
+            CryptoUtilities.ClearMemoryNative(encryptedVault);
+
+            if (decryptedVaultBytes == null || decryptedVaultBytes.Length == 0)
+                throw new InvalidOperationException("Unable to decrypt vault.");
+
+            var decryptedText = Encoding.UTF8.GetString(decryptedVaultBytes);
+            CryptoUtilities.ClearMemoryNative(decryptedVaultBytes);
+
+            var lines = decryptedText.Split(["\r\n", "\n"], StringSplitOptions.None);
+            PassVault.Rows.Clear();
+
+            foreach (var line in lines)
             {
-                using var sr = new StreamReader(filePath);
-                PassVault.Rows.Clear();
+                if (string.IsNullOrWhiteSpace(line))
+                    continue;
 
-                while (!sr.EndOfStream)
-                {
-                    var line = await sr.ReadLineAsync();
-                    var values = line?.Split('\t');
+                var values = line.Split('\t');
+                if (values.Length == 0)
+                    continue;
 
-                    if (IsBase64(line))
-                        throw new ArgumentException("Invalid input text", nameof(line));
-                    if (values is { Length: <= 0 })
-                        continue;
-
-                    var rowIndex = PassVault.Rows.Add();
-
-                    if (values == null)
-                        continue;
-
-                    int index;
-                    for (index = 0; index < values.Length; index++)
-                        PassVault.Rows[rowIndex].Cells[index].Value = values[index];
-
-                    GC.Collect(GC.MaxGeneration, GCCollectionMode.Aggressive, true, true);
-                    GC.WaitForPendingFinalizers();
-                }
+                var rowIndex = PassVault.Rows.Add();
+                for (var i = 0; i < values.Length; i++)
+                    PassVault.Rows[rowIndex].Cells[i].Value = values[i];
             }
-            else
-            {
-                throw new Exception("Vault file does not exist.");
-            }
+        }
+        catch (InvalidOperationException ex)
+        {
+            MessageBox.Show("An error occured when loading vault file.", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            ErrorLogging.ErrorLog(ex);
+        }
+        catch (CryptographicException ex)
+        {
+            MessageBox.Show("A cryptographic error occured when loading vault file.", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            ErrorLogging.ErrorLog(ex);
         }
         catch (Exception ex)
         {
-            MessageBox.Show(ex.Message, "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            MessageBox.Show("An error occured when loading vault file.", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
             ErrorLogging.ErrorLog(ex);
         }
     }
 
-    [GeneratedRegex(@"^[a-zA-Z0-9\+/]*={0,3}$")]
-    private static partial Regex MyRegex();
-
-    private static bool IsBase64(string? str)
-    {
-        return str != null && MyRegex().IsMatch(str) && str.Length % 4 == 0;
-    }
-
+    /// <summary>
+    /// Handles the click event for the Add Row button.
+    /// </summary>
+    /// <param name="sender">The source of the event, typically the AddRowBtn.</param>
+    /// <param name="e">An <see cref="EventArgs"/> that contains the event data.</param>
+    /// <remarks>
+    /// Adds a new row to the <c>PassVault</c> DataGridView. 
+    /// Throws an error if no user is currently logged in.
+    /// </remarks>
+    /// <exception cref="Exception">Thrown when no user is logged in.</exception>
     private void AddRowBtn_Click(object sender, EventArgs e)
     {
         try
         {
-            if (Authentication.CurrentLoggedInUser == string.Empty)
+            if (string.IsNullOrEmpty(UserFileManager.CurrentLoggedInUser))
                 throw new Exception("No user is currently logged in.");
 
             PassVault.Rows.Add();
@@ -103,11 +186,22 @@ public partial class Vault : UserControl
         }
     }
 
+    /// <summary>
+    /// Handles the click event for the Delete Row button.
+    /// </summary>
+    /// <param name="sender">The source of the event, typically the DeleteRowBtn.</param>
+    /// <param name="e">An <see cref="EventArgs"/> that contains the event data.</param>
+    /// <remarks>
+    /// Deletes the currently selected row in the <c>PassVault</c> DataGridView.
+    /// Throws an error if no user is logged in.
+    /// </remarks>
+    /// <exception cref="Exception">Thrown when no user is logged in.</exception>
+    /// <exception cref="ArgumentOutOfRangeException">Thrown if an invalid row index is selected.</exception>
     private void DeleteRowBtn_Click(object sender, EventArgs e)
     {
         try
         {
-            if (Authentication.CurrentLoggedInUser == string.Empty)
+            if (string.IsNullOrEmpty(UserFileManager.CurrentLoggedInUser))
                 throw new Exception("No user is currently logged in.");
 
             if (PassVault.SelectedRows.Count <= 0)
@@ -123,107 +217,96 @@ public partial class Vault : UserControl
         }
     }
 
+    /// <summary>
+    /// Handles the click event for the Save Vault button.
+    /// </summary>
+    /// <param name="sender">The source of the event, typically the SaveVaultBtn.</param>
+    /// <param name="e">An <see cref="EventArgs"/> that contains the event data.</param>
+    /// <remarks>
+    /// Serializes the contents of the <c>PassVault</c> DataGridView,
+    /// encrypts it using the master key, and saves it to the user’s vault file path.
+    /// Displays warnings and disables UI elements to prevent corruption during the save process.
+    /// </remarks>
+    /// <exception cref="Exception">
+    /// Thrown when no user is logged in or when encryption or file writing fails.
+    /// </exception>
     private async void SaveVaultBtn_Click(object sender, EventArgs e)
     {
-        byte[] decryptedPassword = [];
-        var handle = GCHandle.Alloc(decryptedPassword, GCHandleType.Pinned);
-
         try
         {
-            MessageBox.Show(
-                "Do NOT close the program while loading. This may cause corrupted data that is NOT recoverable.",
-                "Info",
-                MessageBoxButtons.OK, MessageBoxIcon.Exclamation);
+            if (string.IsNullOrEmpty(UserFileManager.CurrentLoggedInUser))
+                throw new Exception("There is no user currently logged in.");
 
-            if (Authentication.CurrentLoggedInUser == string.Empty)
+            MessageBox.Show(
+                "Do NOT close the program while saving. This may cause corrupted data that is NOT recoverable. You may only save once per login." +
+                "You will need to log back in in order to load vault contents.",
+                "Info", MessageBoxButtons.OKCancel, MessageBoxIcon.Exclamation);
+
+            if (string.IsNullOrEmpty(UserFileManager.CurrentLoggedInUser))
                 throw new Exception("No user is currently logged in.");
 
-            StartAnimation();
             DisableUi();
 
-            var filePath = Path.Combine("Password Vault", "Users",
-                Authentication.GetUserVault(Authentication.CurrentLoggedInUser));
+            var vaultPlaintext = SerializeVaultToText();
+            var vaultBytes = Encoding.UTF8.GetBytes(vaultPlaintext);
 
-            await using (var sw = new StreamWriter(filePath))
-            {
-                sw.NewLine = null;
-                sw.AutoFlush = true;
-                foreach (DataGridViewRow row in PassVault.Rows)
-                {
-                    for (var i = 0; i < PassVault.Columns.Count; i++)
-                    {
-                        row.Cells[i].ValueType = typeof(char[]);
-                        sw.Write(row.Cells[i].Value);
-                        if (i < PassVault.Columns.Count - 1)
-                            await sw.WriteAsync("\t");
-                    }
+            var masterKey = MasterKey.GetKey();
 
-                    await sw.WriteLineAsync();
-                }
-            }
+            var encryptedVault = await EncryptVaultWithSalt(vaultBytes, masterKey);
 
-            decryptedPassword = ProtectedData.Unprotect(Crypto.CryptoConstants.SecurePassword,
-                Crypto.CryptoConstants.SecurePasswordSalt, DataProtectionScope.CurrentUser);
+            if (encryptedVault == null || encryptedVault.Length == 0)
+                throw new Exception("Encryption failed. Vault not saved.");
 
-            Crypto.CryptoConstants.SecurePassword = decryptedPassword;
+            var userVaultPath = UserFileManager.GetUserVault(UserFileManager.CurrentLoggedInUser);
+            await IO.WriteFile(userVaultPath, encryptedVault);
 
-            var encryptedVault = await Crypto.EncryptFile(Authentication.CurrentLoggedInUser,
-                Crypto.CryptoConstants.SecurePassword,
-                Authentication.GetUserVault(Authentication.CurrentLoggedInUser));
-
-            var encryptedPassword = ProtectedData.Protect(decryptedPassword, Crypto.CryptoConstants.SecurePasswordSalt,
-                DataProtectionScope.CurrentUser);
-
-            Crypto.CryptoConstants.SecurePassword = encryptedPassword;
-
-            if (encryptedVault == Array.Empty<byte>())
-            {
-                Crypto.CryptoUtilities.ClearMemory(decryptedPassword);
-                throw new Exception("There was an error while trying to save.");
-            }
-
-            var encryptedVaultString = DataConversionHelpers.ByteArrayToBase64String(encryptedVault);
-            await File.WriteAllTextAsync(Authentication.GetUserVault(Authentication.CurrentLoggedInUser),
-                encryptedVaultString);
-
-            Crypto.CryptoUtilities.ClearMemory(encryptedVault);
-            Crypto.CryptoUtilities.ClearMemory(encryptedVaultString);
-
-            GC.Collect(GC.MaxGeneration, GCCollectionMode.Aggressive, true, true);
+            CryptoUtilities.ClearMemoryNative(vaultBytes);
+            CryptoUtilities.ClearMemoryNative(encryptedVault);
 
             outputLbl.Text = "Vault saved successfully";
             outputLbl.ForeColor = Color.LimeGreen;
             MessageBox.Show("Vault saved successfully.", "Save vault", MessageBoxButtons.OK,
                 MessageBoxIcon.Information);
-
-            EnableUi();
-            outputLbl.Text = "Idle...";
-            outputLbl.ForeColor = Color.WhiteSmoke;
         }
         catch (Exception ex)
         {
-            Crypto.CryptoUtilities.ClearMemory(decryptedPassword);
-            await _tokenSource.CancelAsync();
-
-            if (_tokenSource.IsCancellationRequested)
-                _tokenSource = new CancellationTokenSource();
-
-            EnableUi();
-            MessageBox.Show(ex.Message, "Error", MessageBoxButtons.OK,
-                MessageBoxIcon.Error);
-
-            outputLbl.Text = "Idle...";
-            outputLbl.ForeColor = Color.White;
+            MessageBox.Show(ex.Message, "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
             ErrorLogging.ErrorLog(ex);
         }
         finally
         {
-            await _tokenSource.CancelAsync();
-            if (_tokenSource.IsCancellationRequested)
-                _tokenSource = new CancellationTokenSource();
-
-            Crypto.CryptoUtilities.ClearMemory(decryptedPassword);
-            handle.Free();
+            EnableUi();
+            outputLbl.Text = "Idle...";
+            outputLbl.ForeColor = Color.WhiteSmoke;
+            SaveVaultBtn.Enabled = false;
+            GC.Collect(GC.MaxGeneration, GCCollectionMode.Aggressive, true, true);
         }
+    }
+
+    /// <summary>
+    /// Serializes the contents of the <c>PassVault</c> DataGridView into a tab-delimited string format.
+    /// </summary>
+    /// <returns>
+    /// A <see cref="string"/> containing the serialized vault data, with each row separated by a newline
+    /// and each cell separated by a tab character.
+    /// </returns>
+    /// <remarks>
+    /// This method skips the placeholder row used for adding new entries (<see cref="DataGridViewRow.IsNewRow"/>).
+    /// </remarks>
+    private string SerializeVaultToText()
+    {
+        var sb = new StringBuilder();
+
+        foreach (DataGridViewRow row in PassVault.Rows)
+        {
+            if (row.IsNewRow) continue;
+
+            var cells = row.Cells.Cast<DataGridViewCell>()
+                .Select(cell => cell.Value?.ToString() ?? string.Empty);
+
+            sb.AppendLine(string.Join("\t", cells));
+        }
+
+        return sb.ToString();
     }
 }

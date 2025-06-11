@@ -4,11 +4,6 @@ namespace Password_Vault_V2
 {
     partial class PasswordVault
     {
-        /// <summary>
-        ///  Required designer variable.
-        /// </summary>
-        private IContainer components = null;
-
         #region Windows Form Designer generated code
 
         /// <summary>
@@ -46,7 +41,6 @@ namespace Password_Vault_V2
             LoginGroupBox = new GroupBox();
             PasswordTxt = new TextBox();
             LogoutBtn = new Button();
-            ShowPasswordCheckBox = new CheckBox();
             RememberMeCheckBox = new CheckBox();
             SidePanelMenu.SuspendLayout();
             TopPanelBar.SuspendLayout();
@@ -301,7 +295,6 @@ namespace Password_Vault_V2
             UsernameTxt.Name = "UsernameTxt";
             UsernameTxt.Size = new Size(525, 34);
             UsernameTxt.TabIndex = 0;
-            UsernameTxt.KeyDown += UsernameTxt_KeyDown;
             // 
             // BtnLogin
             // 
@@ -385,7 +378,6 @@ namespace Password_Vault_V2
             LoginGroupBox.Controls.Add(PasswordTxt);
             LoginGroupBox.Controls.Add(LogoutBtn);
             LoginGroupBox.Controls.Add(WelcomeLabel);
-            LoginGroupBox.Controls.Add(ShowPasswordCheckBox);
             LoginGroupBox.Controls.Add(RememberMeCheckBox);
             LoginGroupBox.Controls.Add(StatusOutputLabel);
             LoginGroupBox.Controls.Add(StatusLabel);
@@ -414,8 +406,8 @@ namespace Password_Vault_V2
             PasswordTxt.Name = "PasswordTxt";
             PasswordTxt.Size = new Size(525, 34);
             PasswordTxt.TabIndex = 2;
-            PasswordTxt.TextChanged += PasswordTxt_TextChanged;
             PasswordTxt.KeyDown += PasswordTxt_KeyDown;
+            PasswordTxt.KeyPress += PasswordTxt_KeyPress;
             // 
             // LogoutBtn
             // 
@@ -432,29 +424,16 @@ namespace Password_Vault_V2
             LogoutBtn.UseVisualStyleBackColor = false;
             LogoutBtn.Click += LogoutBtn_Click;
             // 
-            // ShowPasswordCheckBox
-            // 
-            ShowPasswordCheckBox.AutoSize = true;
-            ShowPasswordCheckBox.Font = new Font("Century Gothic", 11F);
-            ShowPasswordCheckBox.Location = new Point(80, 260);
-            ShowPasswordCheckBox.Name = "ShowPasswordCheckBox";
-            ShowPasswordCheckBox.Size = new Size(204, 29);
-            ShowPasswordCheckBox.TabIndex = 5;
-            ShowPasswordCheckBox.Text = "Show Password";
-            ShowPasswordCheckBox.UseVisualStyleBackColor = true;
-            ShowPasswordCheckBox.CheckedChanged += ShowPasswordCheckBox_CheckedChanged;
-            // 
             // RememberMeCheckBox
             // 
             RememberMeCheckBox.AutoSize = true;
             RememberMeCheckBox.Font = new Font("Century Gothic", 11F);
-            RememberMeCheckBox.Location = new Point(403, 260);
+            RememberMeCheckBox.Location = new Point(80, 260);
             RememberMeCheckBox.Name = "RememberMeCheckBox";
             RememberMeCheckBox.Size = new Size(202, 29);
             RememberMeCheckBox.TabIndex = 6;
             RememberMeCheckBox.Text = "Remember Me";
             RememberMeCheckBox.UseVisualStyleBackColor = true;
-            RememberMeCheckBox.CheckedChanged += RememberMeCheckBox_CheckedChanged;
             // 
             // PasswordVault
             // 
@@ -514,7 +493,6 @@ namespace Password_Vault_V2
         private Label StatusOutputLabel;
         private GroupBox LoginGroupBox;
         private Label WelcomeLabel;
-        private CheckBox ShowPasswordCheckBox;
         private CheckBox RememberMeCheckBox;
         private Button LogoutBtn;
         private Panel SeparatePanel;

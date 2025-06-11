@@ -1,12 +1,12 @@
 ﻿using System.IO.Compression;
-using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
-using System.Security;
 using System.Security.Cryptography;
 using System.Text;
 using Konscious.Security.Cryptography;
+using Org.BouncyCastle.Crypto;
 using Org.BouncyCastle.Crypto.Digests;
 using Org.BouncyCastle.Crypto.Engines;
+using Org.BouncyCastle.Crypto.Generators;
 using Org.BouncyCastle.Crypto.Macs;
 using Org.BouncyCastle.Crypto.Modes;
 using Org.BouncyCastle.Crypto.Paddings;
@@ -15,293 +15,323 @@ using Sodium;
 
 namespace Password_Vault_V2;
 
-public static partial class Crypto
+public abstract class Crypto
 {
-    public static async Task<byte[]> EncryptFile(string userName, byte[] passWord, string plainText)
+    /// <summary>
+    ///     Compresses and encrypts the provided input data using the specified key and HKDF-derived salt.
+    /// </summary>
+    /// <param name="input">The plaintext data to encrypt.</param>
+    /// <param name="keyBytes">The encryption key bytes derived from the master key using HKDF.</param>
+    /// <param name="hkdfSalt">The salt used during HKDF derivation.</param>
+    /// <returns>A task that represents the asynchronous operation. The task result contains the encrypted byte array.</returns>
+    /// <exception cref="ArgumentException">
+    ///     Thrown when <paramref name="input" />, <paramref name="keyBytes" />, or <paramref name="hkdfSalt" /> is null or
+    ///     empty.
+    /// </exception>
+    /// <exception cref="Exception">
+    ///     Thrown if encryption fails due to an internal error. See inner exception for details.
+    /// </exception>
+    internal static async Task<byte[]> EncryptFile(byte[] input, byte[] keyBytes, byte[] hkdfSalt)
     {
-        if (string.IsNullOrEmpty(userName))
-            throw new ArgumentException("Value was empty.", nameof(userName));
-        if (passWord.Length == 0)
-            throw new ArgumentException("Value was empty.", nameof(passWord));
-        if (string.IsNullOrEmpty(plainText))
-            throw new ArgumentException("Value was empty.", nameof(plainText));
+        if (input == null || input.Length == 0)
+            throw new ArgumentException("Value was empty.", nameof(input));
+        if (keyBytes == null || keyBytes.Length == 0)
+            throw new ArgumentException("Value was empty.", nameof(keyBytes));
+        if (hkdfSalt == null || hkdfSalt.Length == 0)
+            throw new ArgumentException("Salt was empty.", nameof(hkdfSalt));
 
-        var salt = Authentication.GetUserSalt(userName);
+        using var bufferSet = BufferInit.InitBuffers(keyBytes, hkdfSalt);
 
-        var bytes = await HashingMethods.Argon2Id(passWord, salt, 544);
-        if (bytes == Array.Empty<byte>())
-            throw new Exception("Value was empty.");
-
-        var fileBytes = DataConversionHelpers.StringToByteArray(await File.ReadAllTextAsync(plainText));
-
-        if (fileBytes == null || fileBytes.Length == 0 || salt == null || salt.Length == 0)
-            throw new ArgumentException("Value was empty.");
-
-        var (key, key2, key3, key4, key5, hMacKey, hMacKey2, hMacKey3) = BufferInit.InitBuffers(bytes);
-
-        var compressedText = await CryptoUtilities.CompressText(fileBytes);
-        var encryptedFile = EncryptionDecryption.EncryptV3(compressedText, key, key2, key3, key4,
-            key5, hMacKey,
-            hMacKey2, hMacKey3);
-
-        var arrays = new[]
+        try
         {
-            key, key2, key3, key4, key5, hMacKey, hMacKey2, hMacKey3, bytes
-        };
+            var compressedFile = await CompressText(input).ConfigureAwait(false);
+            var encryptedFile = EncryptionDecryption.EncryptV3(
+                compressedFile,
+                bufferSet.Key, bufferSet.Key2, bufferSet.Key3, bufferSet.Key4, bufferSet.Key5,
+                bufferSet.HMacKey, bufferSet.HMacKey2, bufferSet.HMacKey3
+            );
 
-        CryptoUtilities.ClearMemory(arrays);
-
-        return encryptedFile;
+            return encryptedFile;
+        }
+        catch (Exception ex)
+        {
+            ErrorLogging.ErrorLog(ex);
+            throw;
+        }
+        finally
+        {
+            CryptoUtilities.ClearMemoryNative(bufferSet.BuffersToClear.Concat(new[] { input }).ToArray());
+        }
     }
 
     /// <summary>
-    ///     Decrypts the contents of an encrypted file using Argon2 key derivation and four layers of decryption.
+    ///     Decrypts and decompresses the provided encrypted input data using the specified key and HKDF-derived salt.
     /// </summary>
-    /// <param name="userName">The username associated with the user's salt for key derivation.</param>
-    /// <param name="passWord">The user's password used for key derivation.</param>
-    /// <param name="cipherText">The ciphertext to decrypt.</param>
+    /// <param name="input">The encrypted data to decrypt.</param>
+    /// <param name="keyBytes">The decryption key bytes derived from the master key using HKDF.</param>
+    /// <param name="hkdfSalt">The salt used during HKDF derivation.</param>
     /// <returns>
-    ///     A Task that completes with the decrypted content of the specified encrypted file.
-    ///     If any error occurs during the process, returns an empty byte array.
+    ///     A task that represents the asynchronous operation. The task result contains the decrypted and decompressed
+    ///     byte array.
     /// </returns>
+    /// <exception cref="ArgumentException">
+    ///     Thrown when <paramref name="input" />, <paramref name="keyBytes" />, or <paramref name="hkdfSalt" /> is null or
+    ///     empty.
+    /// </exception>
+    /// <exception cref="Exception">
+    ///     Thrown if decryption or decompression fails due to an internal error. See inner exception for details.
+    /// </exception>
+    public static async Task<byte[]> DecryptFile(byte[] input, byte[] keyBytes, byte[] hkdfSalt)
+    {
+        if (input == null || input.Length == 0)
+            throw new ArgumentException("Value was empty.", nameof(input));
+        if (keyBytes == null || keyBytes.Length == 0)
+            throw new ArgumentException("Value was empty.", nameof(keyBytes));
+        if (hkdfSalt == null || hkdfSalt.Length == 0)
+            throw new ArgumentException("Salt was empty.", nameof(hkdfSalt));
+
+        using var bufferSet = BufferInit.InitBuffers(keyBytes, hkdfSalt);
+
+        try
+        {
+            var decryptedFile = EncryptionDecryption.DecryptV3(
+                input,
+                bufferSet.Key, bufferSet.Key2, bufferSet.Key3, bufferSet.Key4, bufferSet.Key5,
+                bufferSet.HMacKey, bufferSet.HMacKey2, bufferSet.HMacKey3
+            );
+
+            var decompressedFile = await DecompressText(decryptedFile).ConfigureAwait(false);
+            return decompressedFile;
+        }
+        catch (Exception ex)
+        {
+            ErrorLogging.ErrorLog(ex);
+            throw;
+        }
+        finally
+        {
+            CryptoUtilities.ClearMemoryNative(bufferSet.BuffersToClear.Concat(new[] { input }).ToArray());
+        }
+    }
+
+
+    /// <summary>
+    ///     Compresses a byte array using the GZip compression algorithm.
+    /// </summary>
     /// <remarks>
-    ///     This method performs the following steps:
-    ///     1. Validates input parameters to ensure they are not null or empty.
-    ///     2. Retrieves the user-specific salts for key derivation.
-    ///     3. Derives an encryption key from the user's password and the obtained salt using Argon2id.
-    ///     4. Extracts key components for decryption, including two keys and an HMAC key.
-    ///     5. Reads and decodes the content of the encrypted file.
-    ///     6. Decrypts the file content using ChaCha20-Poly1305 decryption.
-    ///     7. Clears sensitive information, such as the user's password, from memory.
+    ///     This method takes a byte array as input, compresses it using the GZip compression algorithm,
+    ///     and returns the compressed byte array. The compression level used is <see cref="CompressionLevel.SmallestSize" />.
     /// </remarks>
-    public static async Task<byte[]> DecryptFile(string userName, byte[] passWord, string cipherText)
+    /// <param name="inputText">The byte array representing the uncompressed text to be compressed.</param>
+    /// <returns>A compressed byte array using the GZip compression algorithm.</returns>
+    /// <exception cref="ArgumentNullException">Thrown if the input byte array is null.</exception>
+    private static async Task<byte[]> CompressText(byte[] inputBytes)
     {
-        if (string.IsNullOrEmpty(userName))
-            throw new ArgumentException("Value was empty.", nameof(userName));
-        if (passWord.Length == 0)
-            throw new ArgumentException("Value was empty.", nameof(passWord));
-        if (string.IsNullOrEmpty(cipherText))
-            throw new ArgumentException("Value was empty.", nameof(cipherText));
+        if (inputBytes == null)
+            throw new ArgumentNullException(nameof(inputBytes), "Input byte array cannot be null.");
 
-        var salt = Authentication.GetUserSalt(userName);
-
-        var bytes = await HashingMethods.Argon2Id(passWord, salt, 544);
-        var (key, key2, key3, key4, key5, hMacKey, hMacKey2, hMacKey3) = BufferInit.InitBuffers(bytes);
-
-        var fileStr = await File.ReadAllTextAsync(cipherText);
-        var fileBytes = DataConversionHelpers.Base64StringToByteArray(fileStr);
-
-        if (fileBytes == Array.Empty<byte>() || salt == Array.Empty<byte>())
-            throw new ArgumentException("Value was empty.");
-
-        var decryptedFile =
-            EncryptionDecryption.DecryptV3(fileBytes, key, key2, key3, key4, key5, hMacKey,
-                hMacKey2, hMacKey3);
-        var decompressedText = await CryptoUtilities.DecompressText(decryptedFile);
-
-        var arrays = new[]
+        using var outputStream = new MemoryStream();
+        await using (var zipStream = new GZipStream(outputStream, CompressionLevel.SmallestSize, true))
         {
-            key, key2, key3, key4, key5, hMacKey, hMacKey2, hMacKey3, bytes
-        };
-        CryptoUtilities.ClearMemory(arrays);
+            await zipStream.WriteAsync(inputBytes).ConfigureAwait(false);
+        }
 
-        return decompressedText;
+        return outputStream.ToArray();
     }
 
     /// <summary>
-    ///     Encrypts a file using a multi-layer encryption scheme and securely clears sensitive data from memory.
+    ///     Decompresses a byte array that was compressed using the GZip compression algorithm.
     /// </summary>
-    /// <param name="userName">The username associated with the encryption process.</param>
-    /// <param name="input">The input file content in bytes to be encrypted.</param>
-    /// <param name="passWord">The password used to derive encryption keys.</param>
-    /// <param name="salt">The salt value used for key derivation.</param>
-    /// <returns>
-    ///     A task representing the asynchronous operation, with the result being the encrypted file content as a byte
-    ///     array.
-    /// </returns>
-    /// <exception cref="ArgumentException">
-    ///     Thrown if <paramref name="userName" />, <paramref name="input" />, <paramref name="passWord" />, or
-    ///     <paramref name="salt" /> is null or empty.
-    /// </exception>
-    /// <exception cref="Exception">Re-throws any exception encountered during the encryption process after logging the error.</exception>
-    public static async Task<byte[]> EncryptFile(string userName, byte[] input, byte[] passWord, byte[] salt)
+    /// <remarks>
+    ///     This method takes a compressed byte array as input, decompresses it using the GZip compression algorithm,
+    ///     and returns the decompressed byte array.
+    /// </remarks>
+    /// <param name="inputText">The byte array representing the compressed text to be decompressed.</param>
+    /// <returns>A decompressed byte array using the GZip compression algorithm.</returns>
+    /// <exception cref="ArgumentNullException">Thrown if the input byte array is null.</exception>
+    private static async Task<byte[]> DecompressText(byte[] inputBytes)
     {
-        if (string.IsNullOrEmpty(userName))
-            throw new ArgumentException("Value was empty.", nameof(userName));
-        if (input.Length == 0)
-            throw new ArgumentException("Value was empty.", nameof(input));
-        if (passWord.Length == 0)
-            throw new ArgumentException("Value was empty.", nameof(passWord));
-        if (salt.Length == 0)
-            throw new ArgumentException("Value was empty.", nameof(salt));
+        if (inputBytes == null)
+            throw new ArgumentNullException(nameof(inputBytes), "Input byte array cannot be null.");
 
-        var bytes = await HashingMethods.Argon2Id(passWord, salt, 544);
-        var (key, key2, key3, key4, key5, hMacKey, hMacKey2, hMacKey3) = BufferInit.InitBuffers(bytes);
-        byte[] encryptedFile;
+        using var inputStream = new MemoryStream(inputBytes);
+        await using var zipStream = new GZipStream(inputStream, CompressionMode.Decompress);
+        using var outputStream = new MemoryStream();
 
-        try
-        {
-            encryptedFile = EncryptionDecryption.EncryptV3(input, key, key2, key3, key4,
-                key5, hMacKey, hMacKey2, hMacKey3);
-        }
-        catch (Exception ex)
-        {
-            ErrorLogging.ErrorLog(ex);
-            throw;
-        }
-        finally
-        {
-            var arrays = new[]
-            {
-                key, key2, key3, key4, key5, hMacKey, hMacKey2, hMacKey3, bytes
-            };
-
-            CryptoUtilities.ClearMemory(arrays);
-        }
-
-        return encryptedFile;
+        await zipStream.CopyToAsync(outputStream).ConfigureAwait(false);
+        return outputStream.ToArray();
     }
 
     /// <summary>
-    ///     Decrypts a file using a multi-layer decryption scheme and securely clears sensitive data from memory.
+    ///     Derives a cryptographic key from the specified parameters using HKDF and pins the resulting buffer in memory.
     /// </summary>
-    /// <param name="userName">The username associated with the decryption process.</param>
-    /// <param name="input">The encrypted file content in bytes to be decrypted.</param>
-    /// <param name="passWord">The password used to derive decryption keys.</param>
-    /// <param name="salt">The salt value used for key derivation.</param>
-    /// <returns>
-    ///     A task representing the asynchronous operation, with the result being the decrypted file content as a byte
-    ///     array.
-    /// </returns>
-    /// <exception cref="ArgumentException">
-    ///     Thrown if <paramref name="userName" />, <paramref name="input" />, <paramref name="passWord" />, or
-    ///     <paramref name="salt" /> is null or empty.
-    /// </exception>
-    /// <exception cref="Exception">Re-throws any exception encountered during the decryption process after logging the error.</exception>
-    public static async Task<byte[]> DecryptFile(string userName, byte[] input, byte[] passWord, byte[] salt)
+    /// <param name="key">The input key material.</param>
+    /// <param name="salt">The salt used in HKDF.</param>
+    /// <param name="label">A context-specific label (info) for key derivation.</param>
+    /// <param name="length">The desired length of the derived key.</param>
+    /// <returns>A derived key byte array.</returns>
+    private static byte[] DeriveAndPin(byte[] key, byte[] salt, byte[] label, int length)
     {
-        if (string.IsNullOrEmpty(userName))
-            throw new ArgumentException("Value was empty.", nameof(userName));
-        if (input.Length == 0)
-            throw new ArgumentException("Value was empty.", nameof(input));
-        if (passWord.Length == 0)
-            throw new ArgumentException("Value was empty.", nameof(passWord));
-        if (salt.Length == 0)
-            throw new ArgumentException("Value was empty.", nameof(salt));
-
-        var bytes = await HashingMethods.Argon2Id(passWord, salt, 544);
-        var (key, key2, key3, key4, key5, hMacKey, hMacKey2, hMacKey3) = BufferInit.InitBuffers(bytes);
-        byte[] decryptedFile;
-        try
-        {
-            decryptedFile = EncryptionDecryption.DecryptV3(input, key, key2, key3, key4,
-                key5, hMacKey, hMacKey2, hMacKey3);
-        }
-        catch (Exception ex)
-        {
-            ErrorLogging.ErrorLog(ex);
-            throw;
-        }
-        finally
-        {
-            var arrays = new[]
-            {
-                key, key2, key3, key4, key5, hMacKey, hMacKey2, hMacKey3, bytes
-            };
-
-            CryptoUtilities.ClearMemory(arrays);
-        }
-
-        return decryptedFile;
+        return HKDF.HkdfDerivePinned(key, salt, label, length);
     }
 
     /// <summary>
-    ///     Utility class for cryptographic settings and initialization.
+    ///     Represents cryptographic parameters associated with a specific user, including salts, keys, and identifiers used
+    ///     for secure encryption and authentication.
     /// </summary>
-    public class CryptoConstants
+    public abstract class UserCryptoParameters
     {
-        public const int SaltSize = 128;
-        public const int HmacLength = 64;
-        public const int ChaChaNonceSize = 24;
-        public const int KeySize = 32;
-        public const int Iv = 16;
-        public const int ThreeFish = 128;
-        public const int ShuffleKey = 128;
-        public const int BlockBitSize = 128;
-        public const int KeyBitSize = 256;
+        /// <summary>
+        ///     Gets or sets the salt used when hashing the user's password.
+        /// </summary>
+        public static byte[]? HashSalt { get; set; }
+
+        /// <summary>
+        ///     Gets or sets the universally unique identifier (UUID) associated with the user.
+        /// </summary>
+        public static byte[]? UUID { get; set; }
+
+        /// <summary>
+        ///     Gets or sets the salt used for HKDF (HMAC-based Key Derivation Function) operations.
+        /// </summary>
+        public static byte[]? HkdfSalt { get; set; }
+
+        /// <summary>
+        ///     Gets or sets the salt used during key derivation for encryption keys.
+        /// </summary>
+        public static byte[]? KeyDerivationSalt { get; set; }
+
+        /// <summary>
+        ///     Gets or sets the salt used to derive an intermediate encryption key, often used as a step between password and
+        ///     master key.
+        /// </summary>
+        public static byte[]? IntermediateKeySalt { get; set; }
+
+        /// <summary>
+        ///     Gets or sets the salt used when deriving the final master key.
+        /// </summary>
+        public static byte[]? MasterKeySalt { get; set; }
+
+        /// <summary>
+        ///     Gets or sets the securely hashed password value.
+        /// </summary>
+        public static byte[]? PasswordHash { get; set; }
+
+        /// <summary>
+        ///     Gets or sets the encrypted version of the master key.
+        /// </summary>
+        public static byte[]? EncryptedMasterKey { get; set; }
+
+        /// <summary>
+        ///     Gets or sets the salt used for encrypting and authenticating the user's metadata or associated file contents.
+        /// </summary>
+        public static byte[]? UserFileSalt { get; set; }
+    }
+
+    /// <summary>
+    ///     Utility class for cryptographic constants and initialization.
+    /// </summary>
+    internal static class CryptoConstants
+    {
+        // Sizes in bytes
+        public const int SaltSize = 128; // Salt size for key derivation or encryption
+        public const int HmacLength = 64; // Length of HMAC output
+        public const int ChaChaNonceSize = 24; // Nonce size for ChaCha algorithms
+        public const int KeySize = 32; // Symmetric key size (e.g., 256-bit key)
+        public const int Iv = 16; // Initialization Vector size (usually 128 bits)
+        public const int ThreeFish = 128; // Block size or key size for Threefish cipher
+        public const int ShuffleKey = 128; // Size for shuffle key (custom)
+        public const int BlockBitSize = 128; // Block size in bits
+        public const int KeyBitSize = 256; // Key size in bits
+        public const int UuidSize = 16; // UUID size in bytes
+        public const int PasswordHashSize = 64; // Password hash output size
+
+        // Configurable parameters (read from settings)
         public static readonly int Iterations = Settings.Default.Iterations;
-        public static readonly double MemorySize = Settings.Default.MemorySize * Math.Pow(1024, 2);
+
+        public static readonly double
+            MemorySize = Settings.Default.MemorySize * Math.Pow(1024, 2); // Convert MB to bytes
+
         public static readonly int Parallelism = Settings.Default.Parallelism;
 
+        // Random number generator - thread-safe and reusable
         public static readonly RandomNumberGenerator RndNum = RandomNumberGenerator.Create();
-        public static byte[] SecurePasswordSalt = [];
-        public static byte[] EncryptionSalt = [];
-#pragma warning disable CA2211
 
-        public static byte[] Hash = [];
-        public static byte[] SecurePassword = [];
-        public static byte[] PasswordBytes = [];
+        // File signature as a byte array (ASCII encoded)
+        public static readonly byte[] FileSignature = [(byte)'v', (byte)'1', (byte)'.', (byte)'0'];
 
-#pragma warning restore CA2211
+        // Alternatively, using C# 11 UTF8 literal syntax (requires .NET 7+)
+        // public static readonly byte[] FileSignature = "v1.0"u8.ToArray();
     }
 
-    private static partial class Memset
+    internal static class MasterKey
     {
-        [LibraryImport("msvcrt.dll", EntryPoint = "memset", SetLastError = false)]
-        [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
-        public static partial void MemSet(IntPtr dest, int c, int byteCount);
-    }
+        private static GCHandle? _pinnedHandle;
+        private static byte[]? _keyBytes;
+        private static bool _isDisposed;
 
-    public static class ConversionMethods
-    {
-        public static byte[] SecureStringToUtf8Bytes(SecureString secureString)
+        /// <summary>
+        ///     Pins and stores a copy of the master key securely in memory.
+        /// </summary>
+        /// <param name="masterKey">The master key bytes to secure.</param>
+        /// <exception cref="ArgumentNullException"></exception>
+        /// <exception cref="InvalidOperationException">If a key is already set.</exception>
+        public static void SecureKey(byte[] masterKey)
         {
-            if (secureString == null)
-                throw new ArgumentNullException(nameof(secureString), "Value was null.");
+            if (masterKey == null || masterKey.Length == 0)
+                throw new ArgumentException("Master key was null or empty.", nameof(masterKey));
+            if (_keyBytes != null)
+                throw new InvalidOperationException("Master key is already set.");
+            if (_isDisposed)
+                throw new ObjectDisposedException(nameof(MasterKey), "Cannot reuse disposed MasterKey.");
 
-            var unmanagedString = IntPtr.Zero;
-            try
+            // Copy key bytes to avoid exposing the original array
+            _keyBytes = new byte[masterKey.Length];
+            Buffer.BlockCopy(masterKey, 0, _keyBytes, 0, masterKey.Length);
+
+            // Pin the copied byte array
+            _pinnedHandle = GCHandle.Alloc(_keyBytes, GCHandleType.Pinned);
+        }
+
+        /// <summary>
+        ///     Gets the pinned master key bytes.
+        /// </summary>
+        /// <returns>The pinned master key byte array.</returns>
+        /// <exception cref="ObjectDisposedException"></exception>
+        public static byte[] GetKey()
+        {
+            if (_isDisposed)
+                throw new ObjectDisposedException(nameof(MasterKey), "Master key has been disposed.");
+
+            if (_keyBytes == null)
+                throw new InvalidOperationException("Master key has not been set.");
+
+            return _keyBytes;
+        }
+
+        /// <summary>
+        ///     Clears the master key bytes from memory and unpins the buffer.
+        /// </summary>
+        public static void Dispose()
+        {
+            if (!_isDisposed)
             {
-                // Marshal the SecureString to an unmanaged string
-                unmanagedString = Marshal.SecureStringToGlobalAllocUnicode(secureString);
+                if (_keyBytes != null)
+                {
+                    CryptoUtilities.ClearMemoryNative(_keyBytes);
 
-                // Calculate the number of characters in the SecureString
-                var charCount = secureString.Length;
+                    if (_pinnedHandle is { IsAllocated: true })
+                        _pinnedHandle.Value.Free();
 
-                // Allocate a byte array to hold the UTF-16 bytes (2 bytes per character)
-                var utf16Bytes = new byte[charCount * sizeof(char)];
+                    _keyBytes = null;
+                }
 
-                // Copy the UTF-16 bytes from unmanaged memory to the byte array
-                Marshal.Copy(unmanagedString, utf16Bytes, 0, utf16Bytes.Length);
-
-                // Allocate a char array and copy the UTF-16 bytes into it
-                var utf16Chars = new char[charCount];
-                Buffer.BlockCopy(utf16Bytes, 0, utf16Chars, 0, utf16Bytes.Length);
-
-                // Determine the length of the resulting UTF-8 byte array
-                var utf8ByteCount = Encoding.UTF8.GetByteCount(utf16Chars);
-
-                // Allocate a byte array to hold the UTF-8 bytes
-                var utf8Bytes = new byte[utf8ByteCount];
-
-                // Convert the UTF-16 byte array to the UTF-8 byte array
-                Encoding.UTF8.GetBytes(utf16Chars, 0, utf16Chars.Length, utf8Bytes, 0);
-
-                CryptoUtilities.ClearMemory(utf16Bytes);
-                CryptoUtilities.ClearMemory(utf16Chars);
-                return utf8Bytes;
-            }
-            finally
-            {
-                // Zero out the unmanaged memory
-                if (unmanagedString != IntPtr.Zero)
-                    Marshal.ZeroFreeGlobalAllocUnicode(unmanagedString);
+                _isDisposed = true;
             }
         }
     }
 
-
-    public static class HashingMethods
+    internal static class HashingMethods
     {
         /// <summary>
         ///     Hashes a password inside a char array or derives a key from a password.
@@ -323,7 +353,7 @@ public static partial class Crypto
             argon2.Iterations = CryptoConstants.Iterations;
             argon2.MemorySize = (int)CryptoConstants.MemorySize;
 
-            var result = await argon2.GetBytesAsync(outputSize);
+            var result = await argon2.GetBytesAsync(outputSize).ConfigureAwait(false);
 
             return result;
         }
@@ -366,55 +396,206 @@ public static partial class Crypto
         }
     }
 
-    public static class Memory
+    /// <summary>
+    ///     Provides a secure, unmanaged memory buffer for storing sensitive byte and character data,
+    ///     such as passwords, to reduce the risk of data leakage from managed memory.
+    /// </summary>
+    internal sealed class SecurePasswordBuffer : IDisposable
     {
-        private static readonly Dictionary<IntPtr, int> MemorySizes = [];
+        private IntPtr _buffer;
+        private int _capacity;
 
-        public static IntPtr AllocateMemory(int size)
+        /// <summary>
+        ///     Initializes a new instance of the <see cref="SecurePasswordBuffer" /> class with a specified initial capacity.
+        /// </summary>
+        /// <param name="initialCapacity">The initial buffer size in bytes. Defaults to 120 if smaller.</param>
+        public SecurePasswordBuffer(int initialCapacity = 120)
         {
-            var ptr = Marshal.AllocHGlobal(size);
-            MemorySizes[ptr] = size;
-            return ptr;
+            _capacity = Math.Max(initialCapacity, 120);
+            _buffer = Marshal.AllocHGlobal(_capacity);
+            ZeroMemory(_buffer, _capacity);
         }
 
-        public static void FreeMemory(IntPtr ptr)
+        /// <summary>
+        ///     Gets the number of bytes currently stored in the buffer.
+        /// </summary>
+        internal int Length { get; private set; }
+
+        /// <summary>
+        ///     Releases unmanaged resources and securely clears the buffer contents.
+        /// </summary>
+        public void Dispose()
         {
-            if (MemorySizes.ContainsKey(ptr))
+            if (_buffer != IntPtr.Zero)
             {
-                MemorySizes.Remove(ptr);
-                Marshal.FreeHGlobal(ptr);
+                ZeroMemory(_buffer, _capacity);
+                Marshal.FreeHGlobal(_buffer);
+                _buffer = IntPtr.Zero;
             }
-            else
-            {
-                throw new ArgumentException("Pointer not found in allocated memory.");
-            }
+
+            Length = 0;
+            _capacity = 0;
+            GC.SuppressFinalize(this);
         }
 
-        public static void ClearMemory(params IntPtr[] ptrs)
+        /// <summary>
+        ///     Appends a byte array to the buffer.
+        /// </summary>
+        /// <param name="bytes">The byte array to append. Null or empty arrays are ignored.</param>
+        public void Append(byte[] bytes)
         {
-            if (ptrs == null)
-                throw new ArgumentNullException(nameof(ptrs), "Input cannot be null.");
+            if (bytes == null || bytes.Length == 0)
+                return;
 
-            foreach (var ptr in ptrs)
-                if (MemorySizes.TryGetValue(ptr, out var size))
-                    try
-                    {
-                        Memset.MemSet(ptr, 0, size);
-                    }
-                    catch (AccessViolationException ex)
-                    {
-                        ErrorLogging.ErrorLog(ex);
-                        MessageBox.Show(ex.Message, "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
-                    }
-                else
-                    throw new ArgumentException("Pointer not found in allocated memory.");
+            EnsureCapacity(Length + bytes.Length);
+            Marshal.Copy(bytes, 0, _buffer + Length, bytes.Length);
+            Length += bytes.Length;
+        }
 
-            GC.Collect(GC.MaxGeneration, GCCollectionMode.Aggressive, true);
-            GC.WaitForPendingFinalizers();
+        /// <summary>
+        ///     Converts the buffer's contents to a managed <see cref="byte" /> array.
+        ///     Remember to securely clear the returned array after use.
+        /// </summary>
+        /// <returns>A new byte array containing the buffer's contents.</returns>
+        internal byte[] ToByteArray()
+        {
+            var output = new byte[Length];
+            Marshal.Copy(_buffer, output, 0, Length);
+            return output;
+        }
+
+        /// <summary>
+        ///     Converts the buffer's contents to a managed <see cref="char" /> array using UTF-8 decoding.
+        ///     Remember to securely clear the returned array after use.
+        /// </summary>
+        /// <returns>A new character array representing the buffer's contents.</returns>
+        public char[] ToCharArray()
+        {
+            var bytes = ToByteArray();
+            var chars = Encoding.UTF8.GetChars(bytes);
+            ZeroArray(bytes);
+            return chars;
+        }
+
+        /// <summary>
+        ///     Clears the contents of the buffer by zeroing out memory and resetting the length.
+        /// </summary>
+        public void Clear()
+        {
+            ZeroMemory(_buffer, _capacity);
+            Length = 0;
+        }
+
+        /// <summary>
+        ///     Finalizer that ensures unmanaged memory is cleared and released if <see cref="Dispose" /> was not called.
+        /// </summary>
+        ~SecurePasswordBuffer()
+        {
+            Dispose();
+        }
+
+        /// <summary>
+        ///     Adds a single byte to the buffer.
+        /// </summary>
+        /// <param name="b">The byte to add.</param>
+        public void Add(byte b)
+        {
+            EnsureCapacity(Length + 1);
+            Marshal.WriteByte(_buffer + Length, b);
+            Length++;
+        }
+
+        /// <summary>
+        ///     Removes the byte at the specified index and shifts subsequent bytes to the left.
+        /// </summary>
+        /// <param name="index">The zero-based index of the byte to remove.</param>
+        /// <exception cref="ArgumentOutOfRangeException">Thrown if the index is out of bounds.</exception>
+        public void RemoveAt(int index)
+        {
+            if (index < 0 || index >= Length)
+                throw new ArgumentOutOfRangeException(nameof(index));
+
+            unsafe
+            {
+                var ptr = (byte*)_buffer;
+                ptr[index] = 0;
+
+                for (var i = index + 1; i < Length; i++)
+                    ptr[i - 1] = ptr[i];
+
+                ptr[Length - 1] = 0;
+            }
+
+            Length--;
+        }
+
+        /// <summary>
+        ///     Zeros out the unmanaged memory in the given range.
+        /// </summary>
+        /// <param name="ptr">The pointer to unmanaged memory.</param>
+        /// <param name="length">The number of bytes to zero out.</param>
+        private static unsafe void ZeroMemory(IntPtr ptr, int length)
+        {
+            if (ptr == IntPtr.Zero || length <= 0)
+                return;
+
+            var p = (byte*)ptr.ToPointer();
+            for (var i = 0; i < length; i++) p[i] = 0;
+        }
+
+        /// <summary>
+        ///     Zeros out the contents of a managed byte array.
+        /// </summary>
+        /// <param name="array">The byte array to clear.</param>
+        private static void ZeroArray(byte[] array)
+        {
+            if (array == null)
+                return;
+
+            CryptoUtilities.ClearMemoryNative(array);
+        }
+
+        /// <summary>
+        ///     Zeros out the contents of a managed character array.
+        /// </summary>
+        /// <param name="arr">The character array to clear.</param>
+        public static void ZeroArray(char[] arr)
+        {
+            if (arr == null)
+                return;
+
+            var byteSpan = MemoryMarshal.AsBytes<char>(arr);
+            CryptoUtilities.ClearMemoryNative(byteSpan);
+        }
+
+        /// <summary>
+        ///     Ensures the buffer has enough capacity to hold the specified number of bytes.
+        ///     If not, a larger buffer is allocated and existing contents are copied.
+        /// </summary>
+        /// <param name="required">The required total capacity.</param>
+        private void EnsureCapacity(int required)
+        {
+            unsafe
+            {
+                if (required <= _capacity) return;
+
+                var newCapacity = Math.Max(_capacity * 2, required);
+                var newBuffer = Marshal.AllocHGlobal(newCapacity);
+                ZeroMemory(newBuffer, newCapacity);
+
+                if (Length > 0)
+                    Buffer.MemoryCopy((void*)_buffer, (void*)newBuffer, newCapacity, Length);
+
+                ZeroMemory(_buffer, _capacity);
+                Marshal.FreeHGlobal(_buffer);
+
+                _buffer = newBuffer;
+                _capacity = newCapacity;
+            }
         }
     }
 
-    public static class CryptoUtilities
+    internal static class CryptoUtilities
     {
         /// <summary>
         ///     Generates a random integer using a cryptographically secure random number generator.
@@ -433,6 +614,36 @@ public static partial class Crypto
             var result = BitConverter.ToInt32(buffer, 0);
 
             return result;
+        }
+
+        /// <summary>
+        ///     Pins multiple byte arrays in memory to prevent them from being moved by the garbage collector.
+        ///     Useful for scenarios that require fixed memory locations, such as unmanaged operations.
+        /// </summary>
+        /// <param name="arrays">The byte arrays to pin.</param>
+        /// <returns>
+        ///     An array of <see cref="GCHandle" /> instances representing the pinned handles.
+        ///     Each handle must be freed using <see cref="FreeArrays" /> to avoid memory leaks.
+        /// </returns>
+        public static GCHandle[] PinArrays(params byte[][] arrays)
+        {
+            var handles = new GCHandle[arrays.Length];
+
+            for (var i = 0; i < arrays.Length; i++)
+                handles[i] = GCHandle.Alloc(arrays[i], GCHandleType.Pinned);
+
+            return handles;
+        }
+
+        /// <summary>
+        ///     Frees an array of pinned <see cref="GCHandle" /> instances, releasing the pinned memory.
+        /// </summary>
+        /// <param name="handles">The handles to free. Any unallocated handle will be ignored.</param>
+        public static void FreeArrays(params GCHandle[] handles)
+        {
+            foreach (var handle in handles)
+                if (handle.IsAllocated)
+                    handle.Free();
         }
 
         /// <summary>
@@ -506,280 +717,61 @@ public static partial class Crypto
         }
 
         /// <summary>
-        ///     Clears the sensitive information stored in one or more byte arrays using memset.
+        ///     Securely clears multiple byte arrays by overwriting their contents with zeros.
+        ///     Each array is pinned in memory before clearing to prevent optimization or movement by the garbage collector.
         /// </summary>
-        /// <remarks>
-        ///     This method uses a pinned array and the SecureMemoryClear function to overwrite the memory
-        ///     containing sensitive information, enhancing security by preventing the information from being
-        ///     easily accessible in memory.
-        /// </remarks>
-        /// <param name="arrays">The byte arrays containing sensitive information to be cleared.</param>
-        /// <exception cref="ArgumentNullException">Thrown if any of the input arrays is null.</exception>
-        public static void ClearMemory(params byte[][] arrays)
+        /// <param name="arrays">An array of byte arrays to securely clear.</param>
+        /// <exception cref="ArgumentNullException">Thrown if <paramref name="arrays" /> is null or empty.</exception>
+        public static void ClearMemoryNative(params byte[][] arrays)
         {
-            if (arrays.Length == 0)
-                throw new ArgumentNullException(nameof(arrays), "Input cannot be null or empty.");
+            if (arrays == null || arrays.Length == 0)
+                throw new ArgumentNullException(nameof(arrays), "Input array was null or empty.");
 
-            foreach (var array in arrays)
             foreach (var byteArray in arrays)
             {
-                var handle = GCHandle.Alloc(byteArray, GCHandleType.Pinned);
+                if (byteArray == null)
+                    continue;
 
+                GCHandle handle = default;
                 try
                 {
-                    if (byteArray != null)
-                        Memset.MemSet(handle.AddrOfPinnedObject(), 0, byteArray.Length);
-                }
-                catch (AccessViolationException ex)
-                {
-                    ErrorLogging.ErrorLog(ex);
-                    MessageBox.Show(ex.Message, "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                    handle = GCHandle.Alloc(byteArray, GCHandleType.Pinned);
+                    var ptr = handle.AddrOfPinnedObject();
+                    CryptographicOperations.ZeroMemory(byteArray);
                 }
                 finally
                 {
-                    handle.Free();
-
-                    GC.Collect(GC.MaxGeneration, GCCollectionMode.Aggressive, true);
-                    GC.WaitForPendingFinalizers();
+                    if (handle.IsAllocated)
+                        handle.Free();
                 }
             }
         }
 
         /// <summary>
-        ///     Clears the sensitive information stored in one or more byte arrays using memset.
+        ///     Securely clears a single byte array by overwriting its contents with zeros.
         /// </summary>
-        /// <remarks>
-        ///     This method uses a pinned array and the SecureMemoryClear function to overwrite the memory
-        ///     containing sensitive information, enhancing security by preventing the information from being
-        ///     easily accessible in memory.
-        /// </remarks>
-        /// <param name="arrays">The byte arrays containing sensitive information to be cleared.</param>
-        /// <param name="array"></param>
-        /// <exception cref="ArgumentNullException">Thrown if any of the input arrays is null.</exception>
-        public static void ClearMemory(byte[]? array)
+        /// <param name="array">The byte array to securely clear.</param>
+        /// <exception cref="ArgumentNullException">Thrown if <paramref name="array" /> is null or empty.</exception>
+        public static void ClearMemoryNative(byte[] array)
         {
             if (array == null || array.Length == 0)
-                return;
+                throw new ArgumentNullException(nameof(array), "Input array was null or empty.");
 
-            var handle = GCHandle.Alloc(array, GCHandleType.Pinned);
-            try
-            {
-                Memset.MemSet(handle.AddrOfPinnedObject(), 0, array.Length * sizeof(byte));
-            }
-            catch (AccessViolationException ex)
-            {
-                ErrorLogging.ErrorLog(ex);
-                MessageBox.Show(ex.Message, "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
-            }
-            finally
-            {
-                handle.Free();
-            }
+            CryptographicOperations.ZeroMemory(array);
         }
 
         /// <summary>
-        ///     Clears the sensitive information stored in one or more char arrays securely.
+        ///     Securely clears a span of bytes by overwriting its contents with zeros.
         /// </summary>
-        /// <remarks>
-        ///     This method uses a pinned array and the SecureMemoryClear function to overwrite the memory
-        ///     containing sensitive information, enhancing security by preventing the information from being
-        ///     easily accessible in memory.
-        /// </remarks>
-        /// <param name="arrays">The char arrays containing sensitive information to be cleared.</param>
-        /// <exception cref="ArgumentNullException">Thrown if any of the input arrays is null.</exception>
-        public static void ClearMemory(char[][] arrays)
+        /// <param name="array">The byte span to securely clear.</param>
+        /// <exception cref="ArgumentNullException">Thrown if <paramref name="array" /> is empty or has length zero.</exception>
+        public static void ClearMemoryNative(Span<byte> array)
         {
-            if (arrays == null)
-                throw new ArgumentNullException(nameof(arrays), "Input strings cannot be null.");
+            if (array.IsEmpty || array.Length == 0)
+                throw new ArgumentNullException(nameof(array), "Input array was null or empty.");
 
-            foreach (var value in arrays)
-            {
-                var handle = GCHandle.Alloc(value, GCHandleType.Pinned);
-
-                try
-                {
-                    Memset.MemSet(handle.AddrOfPinnedObject(), 0, value.Length * sizeof(char));
-                }
-                catch (AccessViolationException ex)
-                {
-                    ErrorLogging.ErrorLog(ex);
-                    MessageBox.Show(ex.Message, "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
-                }
-                finally
-                {
-                    handle.Free();
-                }
-            }
-        }
-
-        public static void ClearMemory(char[] array)
-        {
-            var handle = GCHandle.Alloc(array, GCHandleType.Pinned);
-
-            try
-            {
-                Memset.MemSet(handle.AddrOfPinnedObject(), 0, array.Length * sizeof(char));
-            }
-            catch (AccessViolationException ex)
-            {
-                ErrorLogging.ErrorLog(ex);
-                MessageBox.Show(ex.Message, "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
-            }
-            finally
-            {
-                handle.Free();
-            }
-        }
-
-        public static void ClearMemory(char c)
-        {
-            var handle = GCHandle.Alloc(c, GCHandleType.Pinned);
-
-            try
-            {
-                Memset.MemSet(handle.AddrOfPinnedObject(), 0, 1);
-            }
-            catch (AccessViolationException ex)
-            {
-                ErrorLogging.ErrorLog(ex);
-                MessageBox.Show(ex.Message, "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
-            }
-            finally
-            {
-                handle.Free();
-            }
-        }
-
-        /// <summary>
-        ///     Clears the sensitive information stored in one or more strings securely.
-        /// </summary>
-        /// <remarks>
-        ///     This method uses a pinned string and the SecureMemoryClear function to overwrite the memory
-        ///     containing sensitive information, enhancing security by preventing the information from being
-        ///     easily accessible in memory.
-        /// </remarks>
-        /// <param name="str">The strings containing sensitive information to be cleared.</param>
-        /// <exception cref="ArgumentNullException">Thrown if any of the input strings is null.</exception>
-        public static void ClearMemory(params string[][] str)
-        {
-            if (str == null)
-                throw new ArgumentNullException(nameof(str), "Input strings cannot be null.");
-
-            foreach (var value in str)
-            {
-                var handle = GCHandle.Alloc(value, GCHandleType.Pinned);
-
-                try
-                {
-                    Memset.MemSet(handle.AddrOfPinnedObject(), 0, value.Length * 2);
-                }
-                catch (AccessViolationException ex)
-                {
-                    ErrorLogging.ErrorLog(ex);
-                    MessageBox.Show(ex.Message, "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
-                }
-                finally
-                {
-                    handle.Free();
-                }
-            }
-        }
-
-        public static void ClearMemory(string str)
-        {
-            var handle = GCHandle.Alloc(str, GCHandleType.Pinned);
-
-            try
-            {
-                Memset.MemSet(handle.AddrOfPinnedObject(), 0, str.Length * 2);
-            }
-            catch (AccessViolationException ex)
-            {
-                ErrorLogging.ErrorLog(ex);
-                MessageBox.Show(ex.Message, "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
-            }
-            finally
-            {
-                handle.Free();
-            }
-        }
-
-        /// <summary>
-        ///     Clears the sensitive information stored in one or more pointers securely.
-        /// </summary>
-        /// <remarks>
-        ///     This method uses a pinned string and the SecureMemoryClear function to overwrite the memory
-        ///     containing sensitive information, enhancing security by preventing the information from being
-        ///     easily accessible in memory.
-        /// </remarks>
-        /// <exception cref="ArgumentNullException">Thrown if any of the input strings is null.</exception>
-        public static void ClearMemory(int size, IntPtr ptr)
-        {
-            if (ptr == IntPtr.Zero)
-                throw new ArgumentNullException(nameof(ptr), "Invalid ptr.");
-
-            var handle = GCHandle.Alloc(ptr, GCHandleType.Pinned);
-
-            try
-            {
-                Memset.MemSet(handle.AddrOfPinnedObject(), 0, size);
-            }
-            catch (AccessViolationException ex)
-            {
-                ErrorLogging.ErrorLog(ex);
-                MessageBox.Show(ex.Message, "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
-            }
-            finally
-            {
-                handle.Free();
-            }
-        }
-
-        /// <summary>
-        ///     Compresses a byte array using the GZip compression algorithm.
-        /// </summary>
-        /// <remarks>
-        ///     This method takes a byte array as input, compresses it using the GZip compression algorithm,
-        ///     and returns the compressed byte array. The compression level used is <see cref="CompressionLevel.SmallestSize" />.
-        /// </remarks>
-        /// <param name="inputText">The byte array representing the uncompressed text to be compressed.</param>
-        /// <returns>A compressed byte array using the GZip compression algorithm.</returns>
-        /// <exception cref="ArgumentNullException">Thrown if the input byte array is null.</exception>
-        public static async Task<byte[]> CompressText(byte[] inputText)
-        {
-            if (inputText == null)
-                throw new ArgumentNullException(nameof(inputText), "Input byte array cannot be null.");
-
-            using var outputStream = new MemoryStream();
-            await using (var zipStream = new GZipStream(outputStream, CompressionLevel.SmallestSize, true))
-            {
-                await zipStream.WriteAsync(inputText).ConfigureAwait(false);
-            }
-
-            return outputStream.ToArray();
-        }
-
-        /// <summary>
-        ///     Decompresses a byte array that was compressed using the GZip compression algorithm.
-        /// </summary>
-        /// <remarks>
-        ///     This method takes a compressed byte array as input, decompresses it using the GZip compression algorithm,
-        ///     and returns the decompressed byte array.
-        /// </remarks>
-        /// <param name="inputText">The byte array representing the compressed text to be decompressed.</param>
-        /// <returns>A decompressed byte array using the GZip compression algorithm.</returns>
-        /// <exception cref="ArgumentNullException">Thrown if the input byte array is null.</exception>
-        public static async Task<byte[]> DecompressText(byte[] inputText)
-        {
-            if (inputText == null)
-                throw new ArgumentNullException(nameof(inputText), "Input byte array cannot be null.");
-
-            using var inputStream = new MemoryStream(inputText);
-            await using var zipStream = new GZipStream(inputStream, CompressionMode.Decompress);
-            using var outputStream = new MemoryStream();
-            await zipStream.CopyToAsync(outputStream);
-
-            return outputStream.ToArray();
+            // Securely clear the span
+            CryptographicOperations.ZeroMemory(array);
         }
     }
 
@@ -789,81 +781,167 @@ public static partial class Crypto
     private static class BufferInit
     {
         /// <summary>
-        ///     Initializes multiple byte arrays from a source byte array for cryptographic operations.
+        ///     Initializes a set of cryptographic buffers by deriving multiple encryption and HMAC keys using HKDF.
+        ///     All buffers are pinned in memory for security.
         /// </summary>
-        /// <remarks>
-        ///     This method takes a source byte array and extracts key components for encryption and HMAC operations.
-        ///     It initializes multiple byte arrays for different cryptographic purposes and returns them as a tuple.
-        /// </remarks>
-        /// <param name="src">The source byte array used for initializing cryptographic buffers.</param>
-        /// <returns>
-        ///     A tuple containing byte arrays for encryption keys (key, key2, key3, key4, key5)
-        ///     and HMAC keys (hMacKey, hMackey2, hMacKey3).
-        /// </returns>
-        /// <exception cref="ArgumentNullException">Thrown if the source byte array is null.</exception>
-        public static (byte[] key, byte[] key2, byte[] key3, byte[] key4, byte[] key5, byte[] hMacKey, byte[]
-            hMackey2, byte[] hMacKey3)
-            InitBuffers(byte[] src)
+        /// <param name="keyBytes">The base key material to derive from.</param>
+        /// <param name="hkdfSalt">The HKDF salt to ensure key uniqueness and security.</param>
+        /// <returns>A <see cref="DisposableBufferSet" /> containing all derived and pinned keys.</returns>
+        /// <exception cref="ArgumentException">
+        ///     Thrown if <paramref name="keyBytes" /> or <paramref name="hkdfSalt" /> are null or
+        ///     empty.
+        /// </exception>
+        public static DisposableBufferSet InitBuffers(byte[] keyBytes, byte[] hkdfSalt)
         {
-            if (src == null)
-                throw new ArgumentNullException(nameof(src), "Source byte array cannot be null.");
+            if (keyBytes == null || keyBytes.Length == 0)
+                throw new ArgumentException("Key is null or empty.");
 
-            var key = new byte[CryptoConstants.KeySize];
-            var key2 = new byte[CryptoConstants.ThreeFish];
-            var key3 = new byte[CryptoConstants.KeySize];
-            var key4 = new byte[CryptoConstants.KeySize];
-            var key5 = new byte[CryptoConstants.ShuffleKey];
-            var hMacKey = new byte[CryptoConstants.HmacLength];
-            var hMackey2 = new byte[CryptoConstants.HmacLength];
-            var hMacKey3 = new byte[CryptoConstants.HmacLength];
+            if (hkdfSalt == null || hkdfSalt.Length == 0)
+                throw new ArgumentException("HKDF salt is null or empty.");
 
-            CopyBytes(src, key, key2, key3, key4, key5, hMacKey, hMackey2, hMacKey3);
+            var set = new DisposableBufferSet();
 
-            CryptoUtilities.ClearMemory(src);
+            try
+            {
+                set.Add("Key",
+                    DeriveAndPin(keyBytes, hkdfSalt, "encryption key 1"u8.ToArray(), CryptoConstants.KeySize));
+                set.Add("Key2",
+                    DeriveAndPin(keyBytes, hkdfSalt, "encryption key 2"u8.ToArray(), CryptoConstants.ThreeFish));
+                set.Add("Key3",
+                    DeriveAndPin(keyBytes, hkdfSalt, "encryption key 3"u8.ToArray(), CryptoConstants.KeySize));
+                set.Add("Key4",
+                    DeriveAndPin(keyBytes, hkdfSalt, "encryption key 4"u8.ToArray(), CryptoConstants.KeySize));
+                set.Add("Key5",
+                    DeriveAndPin(keyBytes, hkdfSalt, "encryption key 5"u8.ToArray(), CryptoConstants.ShuffleKey));
+                set.Add("HMacKey",
+                    DeriveAndPin(keyBytes, hkdfSalt, "hmac key 1"u8.ToArray(), CryptoConstants.HmacLength));
+                set.Add("HMacKey2",
+                    DeriveAndPin(keyBytes, hkdfSalt, "hmac key 2"u8.ToArray(), CryptoConstants.HmacLength));
+                set.Add("HMacKey3",
+                    DeriveAndPin(keyBytes, hkdfSalt, "hmac key 3"u8.ToArray(), CryptoConstants.HmacLength));
+            }
+            catch
+            {
+                set.Dispose();
+                throw;
+            }
 
-            return (key, key2, key3, key4, key5, hMacKey, hMackey2, hMacKey3);
+            return set;
+        }
+    }
+
+
+    internal static class HKDF
+    {
+        /// <summary>
+        ///     Derives a key using HKDF with SHA3-512 and returns a securely initialized byte array.
+        /// </summary>
+        /// <param name="inputKey">The base input key material.</param>
+        /// <param name="salt">The salt used for the HKDF derivation.</param>
+        /// <param name="info">Contextual information for HKDF ("info" parameter).</param>
+        /// <param name="length">The desired length of the output key.</param>
+        /// <returns>A derived byte array of the specified length.</returns>
+        /// <exception cref="ArgumentException">
+        ///     Thrown if <paramref name="inputKey" /> or <paramref name="salt" /> are null or
+        ///     empty.
+        /// </exception>
+        /// <exception cref="ArgumentNullException">Thrown if <paramref name="info" /> is null.</exception>
+        /// <exception cref="ArgumentOutOfRangeException">Thrown if <paramref name="length" /> is less than or equal to zero.</exception>
+        public static byte[] HkdfDerivePinned(byte[] inputKey, byte[] salt, byte[] info, int length)
+        {
+            if (inputKey == null || inputKey.Length == 0)
+                throw new ArgumentException("Input key was null or empty.", nameof(inputKey));
+            if (salt == null || salt.Length == 0)
+                throw new ArgumentException("Salt was null or empty.", nameof(salt));
+            ArgumentNullException.ThrowIfNull(info);
+            ArgumentOutOfRangeException.ThrowIfNegativeOrZero(length);
+
+            var hkdf = new HkdfBytesGenerator(new Sha3Digest(512));
+            hkdf.Init(new HkdfParameters(inputKey, salt, info));
+
+            var pinned = new byte[length];
+            hkdf.GenerateBytes(pinned, 0, length);
+
+            return pinned;
+        }
+    }
+
+    /// <summary>
+    /// Represents a set of cryptographic buffers that are pinned in memory for secure use and disposal.
+    /// </summary>
+    private sealed class DisposableBufferSet : IDisposable
+    {
+        private readonly Dictionary<string, (byte[] buffer, GCHandle handle)> _buffers = new();
+        private bool _disposed;
+
+
+        private byte[] this[string name] => _buffers.TryGetValue(name, out var tuple)
+            ? tuple.buffer
+            : throw new KeyNotFoundException(name);
+
+        /// <summary>Gets the first encryption key (Key1).</summary>
+        public byte[] Key => this["Key"];
+
+        /// <summary>Gets the second encryption key (Key2).</summary>
+        public byte[] Key2 => this["Key2"];
+
+        /// <summary>Gets the third encryption key (Key3).</summary>
+        public byte[] Key3 => this["Key3"];
+
+        /// <summary>Gets the fourth encryption key (Key4).</summary>
+        public byte[] Key4 => this["Key4"];
+
+        /// <summary>Gets the fifth encryption key (Key5).</summary>
+        public byte[] Key5 => this["Key5"];
+
+        /// <summary>Gets the first HMAC key.</summary>
+        public byte[] HMacKey => this["HMacKey"];
+
+        /// <summary>Gets the second HMAC key.</summary>
+        public byte[] HMacKey2 => this["HMacKey2"];
+
+        /// <summary>Gets the third HMAC key.</summary>
+        public byte[] HMacKey3 => this["HMacKey3"];
+
+        /// <summary>
+        /// Gets all buffers stored in this set as an array of byte arrays.
+        /// </summary>
+        public byte[][] BuffersToClear => _buffers.Values.Select(v => v.buffer).ToArray();
+
+        /// <summary>
+        /// Disposes the buffer set by securely clearing and freeing all pinned memory.
+        /// </summary>
+        public void Dispose()
+        {
+            if (_disposed) return;
+
+            foreach (var (_, (buffer, handle)) in _buffers)
+            {
+                CryptographicOperations.ZeroMemory(buffer);
+                if (handle.IsAllocated)
+                    handle.Free();
+            }
+
+            _buffers.Clear();
+            _disposed = true;
         }
 
         /// <summary>
-        ///     Copies bytes from a source byte array to multiple destination byte arrays.
+        /// Adds a derived buffer to the buffer set and pins it in memory.
         /// </summary>
-        /// <remarks>
-        ///     This method copies bytes from a source byte array to multiple destination byte arrays.
-        ///     It uses Buffer.BlockCopy for efficient copying and advances the offset for each destination array.
-        /// </remarks>
-        /// <param name="src">The source byte array from which bytes are copied.</param>
-        /// <param name="dest">The destination byte arrays where bytes are copied to.</param>
-        /// <exception cref="ArgumentNullException">Thrown if the source byte array or any destination byte array is null.</exception>
-        /// <exception cref="ArgumentException">
-        ///     Thrown if the total length of destination arrays exceeds the length of the source
-        ///     array.
-        /// </exception>
-        private static void CopyBytes(byte[] src, params byte[][] dest)
+        /// <param name="name">The key name used to identify the buffer.</param>
+        /// <param name="buffer">The derived byte array buffer.</param>
+        public void Add(string name, byte[] buffer)
         {
-            if (src == null)
-                throw new ArgumentNullException(nameof(src), "Source byte array cannot be null.");
-
-            var currentIndex = 0;
-
-            foreach (var dst in dest)
-            {
-                if (dst == null)
-                    throw new ArgumentNullException(nameof(dest), "Destination byte array cannot be null.");
-
-                if (src.Length < dst.Length)
-                    throw new ArgumentException(
-                        "Length of the destination array cannot exceed the length of the source array.");
-
-                Buffer.BlockCopy(src, currentIndex, dst, 0, dst.Length);
-                currentIndex += dst.Length;
-            }
+            var handle = GCHandle.Alloc(buffer, GCHandleType.Pinned);
+            _buffers[name] = (buffer, handle);
         }
     }
 
     /// <summary>
     ///     A class that contains different algorithms for encrypting and decrypting.
     /// </summary>
-    public class Algorithms
+    private class Algorithms
     {
         /// <summary>
         ///     Generates an array of random indices for shuffling based on a given size and key.
@@ -875,106 +953,78 @@ public static partial class Crypto
         ///     The method uses a random number generator with the specified key to generate
         ///     unique indices for shuffling a byte array of the given size.
         /// </remarks>
-        private static int[] GetShuffleExchanges(int size, byte[] key)
+        private static int[] GenerateShuffleIndices(int size, byte[] key)
         {
-            var exchanges = new int[size - 1];
-            var rand = new Random(BitConverter.ToInt32(key));
+            var indices = new int[size - 1];
+            var bytesNeeded = (size - 1) * 4;
+            var randomBytes = new byte[bytesNeeded];
 
-            for (var i = size - 1; i > 0; i--) exchanges[size - 1 - i] = rand.Next(i + 1);
+            var counter = 0;
+            var filled = 0;
+            while (filled < bytesNeeded)
+            {
+                var ctr = BitConverter.GetBytes(counter++);
+                var hash = HashingMethods.HmacSha3(ctr, key);
+                var copy = Math.Min(hash.Length, bytesNeeded - filled);
+                Buffer.BlockCopy(hash, 0, randomBytes, filled, copy);
+                filled += copy;
+            }
 
-            return exchanges;
+            for (var i = 0; i < indices.Length; i++)
+            {
+                var value = BitConverter.ToInt32(randomBytes, i * 4);
+                indices[i] = Math.Abs(value % (i + 1));
+            }
+
+            return indices;
         }
 
         /// <summary>
-        ///     Shuffles a byte array based on a given key using a custom exchange algorithm.
+        /// Shuffles the input byte array using a deterministic sequence based on the provided key.
+        /// This method performs a keyed permutation to obfuscate the original data order.
         /// </summary>
-        /// <param name="input">The byte array to be shuffled.</param>
-        /// <param name="key">The key used for shuffling.</param>
-        /// <returns>The shuffled byte array.</returns>
+        /// <param name="input">The byte array to shuffle.</param>
+        /// <param name="key">The key used to generate the shuffle pattern.</param>
+        /// <returns>A new byte array containing the shuffled data.</returns>
         /// <remarks>
-        ///     The shuffling is performed using a custom exchange algorithm based on the specified key.
+        /// The same key and input length must be used for the corresponding <see cref="Unshuffle(byte[], byte[])"/> call
+        /// to reverse the operation.
         /// </remarks>
         public static byte[] Shuffle(byte[] input, byte[] key)
         {
-            var size = input.Length;
-            var exchanges = GetShuffleExchanges(size, key);
+            var result = input.ToArray();
+            var indices = GenerateShuffleIndices(input.Length, key);
 
-            for (var i = size - 1; i > 0; i--)
+            for (var i = result.Length - 1; i > 0; i--)
             {
-                var n = exchanges[size - 1 - i];
-                (input[i], input[n]) = (input[n], input[i]);
+                var j = indices[result.Length - 1 - i];
+                (result[i], result[j]) = (result[j], result[i]);
             }
 
-            return input;
+            return result;
         }
 
         /// <summary>
-        ///     Shuffles a char array based on a given key using a custom exchange algorithm.
+        /// Reverses the shuffle operation and restores the original order of a byte array shuffled with the same key.
         /// </summary>
-        /// <param name="input">The char array to be shuffled.</param>
-        /// <param name="key">The key used for shuffling.</param>
-        /// <returns>The shuffled char array.</returns>
-        /// <remarks>
-        ///     The shuffling is performed using a custom exchange algorithm based on the specified key.
-        /// </remarks>
-        public static char[] Shuffle(char[] input, byte[] key)
+        /// <param name="input">The byte array that was previously shuffled.</param>
+        /// <param name="key">The same key used during the shuffle operation.</param>
+        /// <returns>A new byte array containing the original unshuffled data.</returns>
+        /// <exception cref="ArgumentException">
+        /// Thrown if the key or input lengths are invalid or inconsistent with the original shuffle operation.
+        /// </exception>
+        public static byte[] Unshuffle(byte[] input, byte[] key)
         {
-            var size = input.Length;
-            var exchanges = GetShuffleExchanges(size, key);
+            var result = input.ToArray();
+            var indices = GenerateShuffleIndices(input.Length, key);
 
-            for (var i = size - 1; i > 0; i--)
+            for (var i = 1; i < result.Length; i++)
             {
-                var n = exchanges[size - 1 - i];
-                (input[i], input[n]) = (input[n], input[i]);
+                var j = indices[result.Length - 1 - i];
+                (result[i], result[j]) = (result[j], result[i]);
             }
 
-            return input;
-        }
-
-        /// <summary>
-        ///     De-shuffles a byte array based on a given key using a custom exchange algorithm.
-        /// </summary>
-        /// <param name="input">The byte array to be de-shuffled.</param>
-        /// <param name="key">The key used for de-shuffling.</param>
-        /// <returns>The de-shuffled byte array.</returns>
-        /// <remarks>
-        ///     The de-shuffling is performed using a custom exchange algorithm based on the specified key.
-        /// </remarks>
-        public static byte[] DeShuffle(byte[] input, byte[] key)
-        {
-            var size = input.Length;
-            var exchanges = GetShuffleExchanges(size, key);
-
-            for (var i = 1; i < size; i++)
-            {
-                var n = exchanges[size - i - 1];
-                (input[i], input[n]) = (input[n], input[i]);
-            }
-
-            return input;
-        }
-
-        /// <summary>
-        ///     De-shuffles a char array based on a given key using a custom exchange algorithm.
-        /// </summary>
-        /// <param name="input">The char array to be de-shuffled.</param>
-        /// <param name="key">The key used for de-shuffling.</param>
-        /// <returns>The de-shuffled char array.</returns>
-        /// <remarks>
-        ///     The de-shuffling is performed using a custom exchange algorithm based on the specified key.
-        /// </remarks>
-        public static char[] DeShuffle(char[] input, byte[] key)
-        {
-            var size = input.Length;
-            var exchanges = GetShuffleExchanges(size, key);
-
-            for (var i = 1; i < size; i++)
-            {
-                var n = exchanges[size - i - 1];
-                (input[i], input[n]) = (input[n], input[i]);
-            }
-
-            return input;
+            return result;
         }
 
         /// <summary>
@@ -1326,20 +1376,23 @@ public static partial class Crypto
     private static class EncryptionDecryption
     {
         /// <summary>
-        ///     Asynchronously encrypts a byte array using a multi-layer encryption approach.
+        /// Encrypts a plaintext byte array using a multi-layer encryption scheme consisting of:
+        /// XChaCha20-Poly1305, Threefish, Serpent, and AES, with an initial shuffle transformation.
         /// </summary>
-        /// <param name="plaintext">The byte array to be encrypted.</param>
-        /// <param name="key">The key used for the first layer of encryption (XChaCha20-Poly1305).</param>
-        /// <param name="key2">The key used for the second layer of encryption (ThreeFish).</param>
-        /// <param name="key3">The key used for the third layer of encryption.</param>
-        /// <param name="key4">The key used for the fourth layer of encryption.</param>
-        /// <param name="key5">The key used for shuffling the final encrypted result.</param>
-        /// <param name="hMacKey">The key used for HMAC in the second layer of encryption.</param>
-        /// <param name="hMacKey2">The key used for HMAC in the third layer of encryption.</param>
-        /// <param name="hMacKey3">The key used for HMAC in the fourth layer of encryption.</param>
-        /// <returns>A shuffled byte array containing nonces and the final encrypted result.</returns>
-        /// <exception cref="ArgumentException">Thrown when any of the input parameters is an empty array.</exception>
-        /// <exception cref="Exception">Thrown when any intermediate or final encrypted value is empty.</exception>
+        /// <param name="plaintext">The plaintext data to encrypt.</param>
+        /// <param name="key">The encryption key for the XChaCha20-Poly1305 layer.</param>
+        /// <param name="key2">The encryption key for the Threefish layer.</param>
+        /// <param name="key3">The encryption key for the Serpent layer.</param>
+        /// <param name="key4">The encryption key for the AES layer.</param>
+        /// <param name="key5">The shuffle key used to permute the plaintext before encryption.</param>
+        /// <param name="hMacKey">HMAC key for the Threefish layer.</param>
+        /// <param name="hMacKey2">HMAC key for the Serpent layer.</param>
+        /// <param name="hMacKey3">HMAC key for the AES layer.</param>
+        /// <returns>
+        /// A byte array containing the concatenated nonces and the final encrypted ciphertext.
+        /// </returns>
+        /// <exception cref="ArgumentException">Thrown when any input array is empty.</exception>
+        /// <exception cref="CryptoException">Thrown if an error occurs during any encryption stage.</exception>
         public static byte[] EncryptV3(byte[] plaintext,
             byte[] key, byte[] key2, byte[] key3, byte[] key4, byte[] key5, byte[] hMacKey,
             byte[] hMacKey2,
@@ -1369,36 +1422,38 @@ public static partial class Crypto
             var nonce3 = CryptoUtilities.RndByteSized(CryptoConstants.Iv);
             var nonce4 = CryptoUtilities.RndByteSized(CryptoConstants.Iv);
 
-            var cipherText = Algorithms.EncryptXChaCha20Poly1305(plaintext, nonce, key) ??
-                             throw new Exception("Value was empty.");
+            var shuffleText = Algorithms.Shuffle(plaintext, key5);
+
+            var cipherText = Algorithms.EncryptXChaCha20Poly1305(shuffleText, nonce, key) ??
+                             throw new CryptoException("An error occured during encryption.");
             var cipherTextL2 = Algorithms.EncryptThreeFish(cipherText, key2, nonce2, hMacKey) ??
-                               throw new Exception("Value was empty.");
+                               throw new CryptoException("An error occured during encryption.");
             var cipherTextL3 = Algorithms.EncryptSerpent(cipherTextL2, key3, nonce3, hMacKey2) ??
-                               throw new Exception("Value was empty.");
+                               throw new CryptoException("An error occured during encryption.");
             var cipherTextL4 = Algorithms.EncryptAes(cipherTextL3, key4, nonce4, hMacKey3) ??
-                               throw new Exception("Value was empty.");
+                               throw new CryptoException("An error occured during encryption.");
 
             var result = nonce.Concat(nonce2).Concat(nonce3).Concat(nonce4).Concat(cipherTextL4).ToArray();
-            var shuffledResult = Algorithms.Shuffle(result, key5);
 
-            return shuffledResult;
+            return result;
         }
 
         /// <summary>
-        ///     Asynchronously decrypts a byte array that has been encrypted using a multi-layer encryption approach.
+        /// Decrypts a byte array that was encrypted with <see cref="EncryptV3"/> using the corresponding multi-layer
+        /// decryption process. This includes AES, Serpent, Threefish, and XChaCha20-Poly1305, followed by an unshuffle operation.
         /// </summary>
-        /// <param name="cipherText">The byte array to be decrypted.</param>
-        /// <param name="key">The key used for the first layer of decryption (XChaCha20-Poly1305).</param>
-        /// <param name="key2">The key used for the second layer of decryption (ThreeFish).</param>
-        /// <param name="key3">The key used for the third layer of decryption.</param>
-        /// <param name="key4">The key used for the fourth layer of encryption.</param>
-        /// <param name="key5">The key used for unshuffling the ciphertext.</param>
-        /// <param name="hMacKey">The key used for HMAC in the second layer of decryption.</param>
-        /// <param name="hMacKey2">The key used for HMAC in the third layer of decryption.</param>
-        /// <param name="hMacKey3">The key used for HMAC in the fourth layer of encryption.</param>
-        /// <returns>The decrypted byte array.</returns>
-        /// <exception cref="ArgumentException">Thrown when any of the input parameters is an empty array.</exception>
-        /// <exception cref="Exception">Thrown when any intermediate or final decrypted value is empty.</exception>
+        /// <param name="cipherText">The encrypted data including prepended nonces.</param>
+        /// <param name="key">The encryption key for the XChaCha20-Poly1305 layer.</param>
+        /// <param name="key2">The encryption key for the Threefish layer.</param>
+        /// <param name="key3">The encryption key for the Serpent layer.</param>
+        /// <param name="key4">The encryption key for the AES layer.</param>
+        /// <param name="key5">The shuffle key originally used to permute the plaintext.</param>
+        /// <param name="hMacKey">HMAC key for the Threefish layer.</param>
+        /// <param name="hMacKey2">HMAC key for the Serpent layer.</param>
+        /// <param name="hMacKey3">HMAC key for the AES layer.</param>
+        /// <returns>The original plaintext byte array after full decryption and unshuffling.</returns>
+        /// <exception cref="ArgumentException">Thrown when any input array is empty.</exception>
+        /// <exception cref="CryptoException">Thrown if an error occurs during any decryption stage.</exception>
         public static byte[] DecryptV3(byte[] cipherText,
             byte[] key, byte[] key2, byte[] key3, byte[] key4, byte[] key5, byte[] hMacKey,
             byte[] hMacKey2,
@@ -1423,35 +1478,33 @@ public static partial class Crypto
             if (hMacKey3 == Array.Empty<byte>())
                 throw new ArgumentException("Value was empty.", nameof(hMacKey3));
 
-            var unshuffledResult = Algorithms.DeShuffle(cipherText, key5);
-
             var nonce = new byte[CryptoConstants.ChaChaNonceSize];
-            Buffer.BlockCopy(unshuffledResult, 0, nonce, 0, nonce.Length);
+            Buffer.BlockCopy(cipherText, 0, nonce, 0, nonce.Length);
             var nonce2 = new byte[CryptoConstants.ThreeFish];
-            Buffer.BlockCopy(unshuffledResult, nonce.Length, nonce2, 0, nonce2.Length);
+            Buffer.BlockCopy(cipherText, nonce.Length, nonce2, 0, nonce2.Length);
             var nonce3 = new byte[CryptoConstants.Iv];
-            Buffer.BlockCopy(unshuffledResult, nonce.Length + nonce2.Length, nonce3, 0, nonce3.Length);
+            Buffer.BlockCopy(cipherText, nonce.Length + nonce2.Length, nonce3, 0, nonce3.Length);
             var nonce4 = new byte[CryptoConstants.Iv];
-            Buffer.BlockCopy(unshuffledResult, nonce.Length + nonce2.Length + nonce3.Length, nonce4, 0, nonce4.Length);
+            Buffer.BlockCopy(cipherText, nonce.Length + nonce2.Length + nonce3.Length, nonce4, 0, nonce4.Length);
 
             var cipherResult =
-                new byte[unshuffledResult.Length - nonce4.Length - nonce3.Length - nonce2.Length - nonce.Length];
+                new byte[cipherText.Length - nonce4.Length - nonce3.Length - nonce2.Length - nonce.Length];
 
-            Buffer.BlockCopy(unshuffledResult, nonce.Length + nonce2.Length + nonce3.Length + nonce4.Length,
+            Buffer.BlockCopy(cipherText, nonce.Length + nonce2.Length + nonce3.Length + nonce4.Length,
                 cipherResult,
                 0,
                 cipherResult.Length);
 
             var resultL4 = Algorithms.DecryptAes(cipherResult, key4, hMacKey3) ??
-                           throw new Exception("Value was empty.");
+                           throw new CryptoException("An error occured during decryption.");
             var resultL3 = Algorithms.DecryptSerpent(resultL4, key3, hMacKey2) ??
-                           throw new Exception("Value was empty.");
+                           throw new CryptoException("An error occured during decryption.");
             var resultL2 = Algorithms.DecryptThreeFish(resultL3, key2, hMacKey) ??
-                           throw new Exception("Value was empty.");
+                           throw new CryptoException("An error occured during decryption.");
             var result = Algorithms.DecryptXChaCha20Poly1305(resultL2, nonce, key) ??
-                         throw new Exception("Value was empty.");
+                         throw new CryptoException("An error occured during decryption.");
 
-            return result;
+            return Algorithms.Unshuffle(result, key5);
         }
     }
 }
