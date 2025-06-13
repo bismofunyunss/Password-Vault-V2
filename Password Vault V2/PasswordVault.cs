@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Runtime.InteropServices;
+using System.Security.Cryptography;
 using static Password_Vault_V2.Crypto;
 
 namespace Password_Vault_V2;
@@ -41,26 +42,33 @@ public sealed partial class PasswordVault : Form
     #region Methods
 
     /// <summary>
-    /// Handles the click event for the login button. Validates input, handles login logic,
-    /// manages UI state, and displays messages based on success or failure.
+    ///     Handles the click event for the login button. Validates input, handles login logic,
+    ///     manages UI state, and displays messages based on success or failure.
     /// </summary>
     /// <param name="sender">The source of the event (typically the login button).</param>
     /// <param name="e">The event data associated with the click event.</param>
     /// <remarks>
-    /// This method performs the following actions:
-    /// <list type="bullet">
-    /// <item>Converts the password buffer to a byte array.</item>
-    /// <item>Stores or clears the username in application settings based on the "Remember Me" checkbox.</item>
-    /// <item>Parses and checks remaining login attempts, preventing login if exhausted.</item>
-    /// <item>Validates input fields and shows a warning about not closing the application while loading.</item>
-    /// <item>Disables the UI during login processing.</item>
-    /// <item>Calls <c>UserFileManager.UserExists</c> and passes result to <c>ProcessLogin</c>.</item>
-    /// <item>Handles and logs exceptions, updates the UI with failure status, decrements attempt counter, and re-enables controls.</item>
-    /// <item>Clears the password field, disposes of password buffer, and performs aggressive garbage collection in <c>finally</c>.</item>
-    /// </list>
+    ///     This method performs the following actions:
+    ///     <list type="bullet">
+    ///         <item>Converts the password buffer to a byte array.</item>
+    ///         <item>Stores or clears the username in application settings based on the "Remember Me" checkbox.</item>
+    ///         <item>Parses and checks remaining login attempts, preventing login if exhausted.</item>
+    ///         <item>Validates input fields and shows a warning about not closing the application while loading.</item>
+    ///         <item>Disables the UI during login processing.</item>
+    ///         <item>Calls <c>UserFileManager.UserExists</c> and passes result to <c>ProcessLogin</c>.</item>
+    ///         <item>
+    ///             Handles and logs exceptions, updates the UI with failure status, decrements attempt counter, and
+    ///             re-enables controls.
+    ///         </item>
+    ///         <item>
+    ///             Clears the password field, disposes of password buffer, and performs aggressive garbage collection in
+    ///             <c>finally</c>.
+    ///         </item>
+    ///     </list>
     /// </remarks>
     /// <exception cref="Exception">
-    /// Thrown if the username is empty, the password array is null/empty, or if the remaining attempts value is unparsable.
+    ///     Thrown if the username is empty, the password array is null/empty, or if the remaining attempts value is
+    ///     unparsable.
     /// </exception>
     private async void BtnLogin_Click(object sender, EventArgs e)
     {
@@ -142,17 +150,17 @@ public sealed partial class PasswordVault : Form
     }
 
     /// <summary>
-    /// Processes the login attempt based on whether the user exists.
+    ///     Processes the login attempt based on whether the user exists.
     /// </summary>
     /// <param name="userExists">
-    /// A boolean value indicating whether the user exists in the system.
+    ///     A boolean value indicating whether the user exists in the system.
     /// </param>
     /// <returns>
-    /// A <see cref="Task"/> representing the asynchronous operation.
+    ///     A <see cref="Task" /> representing the asynchronous operation.
     /// </returns>
     /// <remarks>
-    /// If <paramref name="userExists"/> is <c>true</c>, the method starts the asynchronous login process.
-    /// If <paramref name="userExists"/> is <c>false</c>, it triggers a response indicating that the user does not exist.
+    ///     If <paramref name="userExists" /> is <c>true</c>, the method starts the asynchronous login process.
+    ///     If <paramref name="userExists" /> is <c>false</c>, it triggers a response indicating that the user does not exist.
     /// </remarks>
     private async Task ProcessLogin(bool userExists)
     {
@@ -168,24 +176,24 @@ public sealed partial class PasswordVault : Form
     }
 
     /// <summary>
-    /// Parses a decrypted user file into its component byte array segments.
-    /// Each segment is expected to be prefixed by a 4-byte integer indicating the segment's length.
-    /// <br/><br/>
-    /// <b>Example usage:</b>
-    /// <code>
+    ///     Parses a decrypted user file into its component byte array segments.
+    ///     Each segment is expected to be prefixed by a 4-byte integer indicating the segment's length.
+    ///     <br /><br />
+    ///     <b>Example usage:</b>
+    ///     <code>
     /// byte[] decrypted = DecryptFile(...);
     /// byte[][] parts = ParseUserFile(decrypted);
     /// </code>
     /// </summary>
     /// <param name="decryptedBytes">
-    /// A byte array representing the decrypted contents of a user file. The file must consist of
-    /// sequential blocks prefixed with 4-byte length headers.
+    ///     A byte array representing the decrypted contents of a user file. The file must consist of
+    ///     sequential blocks prefixed with 4-byte length headers.
     /// </param>
     /// <returns>
-    /// An array of <see cref="byte[]"/> where each entry represents one segment from the original byte stream.
+    ///     An array of <see cref="byte[]" /> where each entry represents one segment from the original byte stream.
     /// </returns>
     /// <exception cref="EndOfStreamException">
-    /// Thrown if a declared length exceeds the remaining data, indicating a malformed or truncated file.
+    ///     Thrown if a declared length exceeds the remaining data, indicating a malformed or truncated file.
     /// </exception>
     private static byte[][] ParseUserFile(byte[] decryptedBytes)
     {
@@ -203,36 +211,37 @@ public sealed partial class PasswordVault : Form
         return [.. parts];
     }
 
+
     /// <summary>
-    /// Begins the secure login process by reading and validating a user's encrypted file,
-    /// verifying the password, and loading cryptographic parameters into memory.
-    /// <br/><br/>
-    /// <b>Example usage:</b>
-    /// <code>
+    ///     Begins the secure login process by reading and validating a user's encrypted file,
+    ///     verifying the password, and loading cryptographic parameters into memory.
+    ///     <br /><br />
+    ///     <b>Example usage:</b>
+    ///     <code>
     /// await StartLoginProcessAsync();
     /// </code>
     /// </summary>
     /// <remarks>
-    /// This method performs several sequential steps:
-    /// <list type="number">
-    /// <item>Initializes the cancellation token if needed and sets process priority.</item>
-    /// <item>Starts a UI animation and extracts the password bytes.</item>
-    /// <item>Reads the encrypted user file from disk and parses out salts, UUIDs, and encrypted data.</item>
-    /// <item>Uses Argon2id to derive the file decryption key and decrypts the user file.</item>
-    /// <item>Validates password hash and UUID integrity checks to ensure data hasn't been tampered with.</item>
-    /// <item>Derives a password-based key to decrypt the master key used for future cryptographic operations.</item>
-    /// <item>If successful, updates application state and securely stores the master key in memory.</item>
-    /// </list>
-    /// Sensitive buffers are securely cleared in the <c>finally</c> block to prevent memory disclosure.
+    ///     This method performs several sequential steps:
+    ///     <list type="number">
+    ///         <item>Initializes the cancellation token if needed and sets process priority.</item>
+    ///         <item>Starts a UI animation and extracts the password bytes.</item>
+    ///         <item>Reads the encrypted user file from disk and parses out salts, UUIDs, and encrypted data.</item>
+    ///         <item>Uses Argon2id to derive the file decryption key and decrypts the user file.</item>
+    ///         <item>Validates password hash and UUID integrity checks to ensure data hasn't been tampered with.</item>
+    ///         <item>Derives a password-based key to decrypt the master key used for future cryptographic operations.</item>
+    ///         <item>If successful, updates application state and securely stores the master key in memory.</item>
+    ///     </list>
+    ///     Sensitive buffers are securely cleared in the <c>finally</c> block to prevent memory disclosure.
     /// </remarks>
     /// <exception cref="UnauthorizedAccessException">
-    /// Thrown if password validation or file integrity checks (UUID/HKDF salt mismatch) fail.
+    ///     Thrown if password validation or file integrity checks (UUID/HKDF salt mismatch) fail.
     /// </exception>
     /// <exception cref="FileNotFoundException">
-    /// Thrown if the user file is missing critical cryptographic segments.
+    ///     Thrown if the user file is missing critical cryptographic segments.
     /// </exception>
     /// <exception cref="Exception">
-    /// May throw other exceptions for unexpected conditions, such as null/empty password or memory issues.
+    ///     May throw other exceptions for unexpected conditions, such as null/empty password or memory issues.
     /// </exception>
     private async Task StartLoginProcessAsync()
     {
@@ -248,104 +257,148 @@ public sealed partial class PasswordVault : Form
         byte[]
             derivedHash = [],
             decryptedBytes = [],
-            uuidBytes = [];
-        byte[]
-            userFile = [],
+            uuidBytes = [],
+            hmac = [],
+            hmacSalt = [],
+            derivedHmacSalt = [],
+            fileSalt = [],
+            fileKeySalt = [],
             fileKey = [],
+            derivedHmacKey = [],
+            hmacKey = [],
+            encryptionKey = [],
+            hashSalt = [],
+            masterKeySalt = [],
+            masterKeyEncryptionSalt = [],
+            encryptionKeySalt = [],
+            keyDerivationSalt = [],
+            intermediateKeySalt = [],
+            userFile = [],
+            derivedFileKey = [],
             passwordDerivedKey = [],
+            intermediateKey = [],
             decryptedMasterKey = [];
 
-        var handles = CryptoUtilities.PinArrays(passwordBytes, decryptedBytes, fileKey,
-            passwordDerivedKey, decryptedMasterKey);
+        var handles = CryptoUtilities.PinArrays(passwordBytes, decryptedBytes, derivedFileKey,
+            passwordDerivedKey, encryptionKey, intermediateKey, decryptedMasterKey);
 
         try
         {
             var userName = UsernameTxt.Text;
 
             // Step 1: Read user file
-            userFile = await File.ReadAllBytesAsync(UserFileManager.GetUserFilePath(userName));
+            userFile = await IO.ReadFile(UserFileManager.GetUserFilePath(userName));
             if (userFile.Length < CryptoConstants.SaltSize * 2 + CryptoConstants.UuidSize)
                 throw new FileNotFoundException("User data is incomplete or corrupted.");
 
             var offset = 0;
 
-            // Extract userFileSalt
-            var userFileSalt = new byte[CryptoConstants.SaltSize];
-            Buffer.BlockCopy(userFile, offset, userFileSalt, 0, userFileSalt.Length);
-            offset += userFileSalt.Length;
+            // Extract hmac
+            hmac = new byte[CryptoConstants.HmacLength];
+            Buffer.BlockCopy(userFile, offset, hmac, 0, hmac.Length);
+            offset += hmac.Length;
 
-            // Extract UUID
+            // Extract hmac salt
+            hmacSalt = new byte[CryptoConstants.SaltSize];
+            Buffer.BlockCopy(userFile, offset, hmacSalt, 0, hmacSalt.Length);
+            offset += hmacSalt.Length;
+
+            // Extract derived hmac salt
+            derivedHmacSalt = new byte[CryptoConstants.SaltSize];
+            Buffer.BlockCopy(userFile, offset, derivedHmacSalt, 0, derivedHmacSalt.Length);
+            offset += derivedHmacSalt.Length;
+
+            // Extract file salt   
+            fileSalt = new byte[CryptoConstants.SaltSize];
+            Buffer.BlockCopy(userFile, offset, fileSalt, 0, fileSalt.Length);
+            offset += fileSalt.Length;
+
+            // Extract file key salt
+            fileKeySalt = new byte[CryptoConstants.SaltSize];
+            Buffer.BlockCopy(userFile, offset, fileKeySalt, 0, fileKeySalt.Length);
+            offset += fileKeySalt.Length;
+
+            encryptionKeySalt = new byte[CryptoConstants.SaltSize];
+            Buffer.BlockCopy(userFile, offset, encryptionKeySalt, 0, encryptionKeySalt.Length);
+            offset += encryptionKeySalt.Length;
+
+            // Extract uuid
             uuidBytes = new byte[CryptoConstants.UuidSize];
             Buffer.BlockCopy(userFile, offset, uuidBytes, 0, uuidBytes.Length);
             offset += uuidBytes.Length;
 
-            // Extract hkdfSalt
-            var
-                hkdfSalt = new byte[CryptoConstants.SaltSize];
-            Buffer.BlockCopy(userFile, offset, hkdfSalt, 0, hkdfSalt.Length);
-            offset += hkdfSalt.Length;
+            // Extract hash salt
+            hashSalt = new byte[CryptoConstants.SaltSize];
+            Buffer.BlockCopy(userFile, offset, hashSalt, 0, hashSalt.Length);
+            offset += hashSalt.Length;
 
-            // Extract encryptedUserFile
-            var encryptedLength = userFile.Length - offset;
-            var encryptedUserFile = new byte[encryptedLength];
-            Buffer.BlockCopy(userFile, offset, encryptedUserFile, 0, encryptedLength);
+            // Extract master key encryption salt
+            masterKeyEncryptionSalt = new byte[CryptoConstants.SaltSize];
+            Buffer.BlockCopy(userFile, offset, masterKeyEncryptionSalt, 0, masterKeyEncryptionSalt.Length);
+            offset += masterKeyEncryptionSalt.Length;
 
-            UserCryptoParameters.HkdfSalt = hkdfSalt;
+            // Extract key derivation salt
+            keyDerivationSalt = new byte[CryptoConstants.SaltSize];
+            Buffer.BlockCopy(userFile, offset, keyDerivationSalt, 0, keyDerivationSalt.Length);
+            offset += keyDerivationSalt.Length;
 
-            // Step 2: Derive fileKey
-            fileKey = await HashingMethods.Argon2Id(passwordBytes, userFileSalt, CryptoConstants.KeySize);
+            // Extract intermediate key salt
+            intermediateKeySalt = new byte[CryptoConstants.SaltSize];
+            Buffer.BlockCopy(userFile, offset, intermediateKeySalt, 0, intermediateKeySalt.Length);
+            offset += intermediateKeySalt.Length;
+
+            // Extract ciphertext
+            var encryptedFile = new byte[userFile.Length -  offset];
+            Buffer.BlockCopy(userFile, offset, encryptedFile, 0, encryptedFile.Length);
+
+            passwordDerivedKey = await HashingMethods.Argon2Id(passwordBytes, keyDerivationSalt, CryptoConstants.KeySize);
+            derivedFileKey = await HashingMethods.Argon2Id(passwordBytes, fileKeySalt, CryptoConstants.KeySize);
+            derivedHmacKey = await HashingMethods.Argon2Id(passwordBytes, derivedHmacSalt, CryptoConstants.KeySize);
+            hmacKey = Crypto.HKDF.HkdfDerivePinned(derivedHmacKey, hmacSalt, "hmac key"u8.ToArray(), CryptoConstants.HmacLength);
+            intermediateKey = Crypto.HKDF.HkdfDerivePinned(passwordDerivedKey, intermediateKeySalt, "intermediate key"u8.ToArray(), CryptoConstants.KeySize);
+            encryptionKey = Crypto.HKDF.HkdfDerivePinned(derivedFileKey, encryptionKeySalt, "encryption key"u8.ToArray(), CryptoConstants.KeySize);
+
+            var calculatedHmac = HashingMethods.HmacSha3(encryptedFile, hmacKey);
+            if (!CryptographicOperations.FixedTimeEquals(hmac, calculatedHmac))
+                throw new CryptographicException("Authentication tag does not amtch.");
 
             // Step 3: Decrypt user file
-            decryptedBytes = await DecryptFile(encryptedUserFile, fileKey, hkdfSalt);
+            decryptedBytes = await DecryptFile(encryptedFile, encryptionKey, fileSalt);
 
             // Step 4: Parse decrypted data
             var parts = ParseUserFile(decryptedBytes);
 
-            UserCryptoParameters.HashSalt = parts[0];
-            UserCryptoParameters.UUID = parts[1];
-            UserCryptoParameters.HkdfSalt = parts[2];
-            if (!UserCryptoParameters.HkdfSalt.SequenceEqual(hkdfSalt))
-                throw new UnauthorizedAccessException("HKDF salt mismatch, file integrity compromised.");
-            UserCryptoParameters.KeyDerivationSalt = parts[3];
-            UserCryptoParameters.IntermediateKeySalt = parts[4];
-            UserCryptoParameters.MasterKeySalt = parts[5];
-            UserCryptoParameters.PasswordHash = parts[6]; // <-- Use index 6 here
-            UserCryptoParameters.EncryptedMasterKey = parts[7]; // <-- And index 7 here
-
+            var passwordHash = parts[0];
+            var storedUuid = parts[1];
+            var encryptedMasterKey = parts[2];
 
             // Final check
-            if (!UserCryptoParameters.UUID.SequenceEqual(uuidBytes))
-                throw new UnauthorizedAccessException("UUID mismatch, user file corrupted.");
-
-            var path = UserFileManager.GetUserFilePath(userName);
-            File.SetAttributes(path, FileAttributes.None);
+            if (!CryptographicOperations.FixedTimeEquals(storedUuid, uuidBytes))
+                throw new UnauthorizedAccessException("UUID does not match.");
 
             // Verify password hash
-            derivedHash = await HashingMethods.Argon2Id(passwordBytes, UserCryptoParameters.HashSalt, 64);
+            derivedHash = await HashingMethods.Argon2Id(passwordBytes, hashSalt, CryptoConstants.HmacLength);
 
-            if (!CryptoUtilities.ComparePassword(derivedHash, UserCryptoParameters.PasswordHash))
+            if (!CryptoUtilities.ComparePassword(derivedHash, passwordHash))
             {
-                await Task.Delay(300); // Slow down brute-force attacks
+                await Task.Delay(300);
                 throw new UnauthorizedAccessException("Invalid password.");
             }
 
             // Set current user
             UserFileManager.CurrentLoggedInUser = userName;
 
-            passwordDerivedKey = await HashingMethods.Argon2Id(passwordBytes,
-                UserCryptoParameters.KeyDerivationSalt, CryptoConstants.KeySize);
+            decryptedMasterKey =
+                await DecryptFile(encryptedMasterKey, intermediateKey, masterKeyEncryptionSalt);
 
-            decryptedMasterKey = await DecryptFile(UserCryptoParameters.EncryptedMasterKey, passwordDerivedKey, hkdfSalt);
+            MasterKey.SecureKey(decryptedMasterKey);
 
-            MasterKey.SecureKey(decryptedMasterKey); // Store securely in memory
-
-            // Successful login logic
             await HandleLogin();
         }
 
         finally
         {
-#pragma warning disable 
+#pragma warning disable
             // Sanitize sensitive memory
             CryptoUtilities.ClearMemoryNative(uuidBytes, derivedHash, fileKey,
                 passwordBytes, decryptedBytes, passwordDerivedKey,
@@ -367,14 +420,14 @@ public sealed partial class PasswordVault : Form
     }
 
     /// <summary>
-    /// Handles the case when a user does not exist in the system.
+    ///     Handles the case when a user does not exist in the system.
     /// </summary>
     /// <exception cref="Exception">
-    /// Thrown to indicate that the specified username does not exist.
+    ///     Thrown to indicate that the specified username does not exist.
     /// </exception>
     /// <remarks>
-    /// This method throws a generic <see cref="Exception"/> with a message indicating that
-    /// the username was not found. It is typically used to halt further login processing.
+    ///     This method throws a generic <see cref="Exception" /> with a message indicating that
+    ///     the username was not found. It is typically used to halt further login processing.
     /// </remarks>
     private static void UserDoesNotExist()
     {
@@ -382,19 +435,31 @@ public sealed partial class PasswordVault : Form
     }
 
     /// <summary>
-    /// Handles UI and internal state recovery after a failed login attempt.
+    ///     Handles UI and internal state recovery after a failed login attempt.
     /// </summary>
     /// <remarks>
-    /// This method performs the following recovery actions:
-    /// <list type="number">
-    /// <item><description>Re-enables UI elements for another login attempt.</description></item>
-    /// <item><description>Updates the status label to reflect the login failure.</description></item>
-    /// <item><description>Cancels and resets the current cancellation token source.</description></item>
-    /// <item><description>Displays an error message to the user.</description></item>
-    /// <item><description>Clears the password textbox and resets the status label to idle.</description></item>
-    /// <item><description>Decrements the remaining login attempts and updates the UI label.</description></item>
-    /// </list>
-    /// All sensitive information from the failed login attempt is cleared from memory or UI elements.
+    ///     This method performs the following recovery actions:
+    ///     <list type="number">
+    ///         <item>
+    ///             <description>Re-enables UI elements for another login attempt.</description>
+    ///         </item>
+    ///         <item>
+    ///             <description>Updates the status label to reflect the login failure.</description>
+    ///         </item>
+    ///         <item>
+    ///             <description>Cancels and resets the current cancellation token source.</description>
+    ///         </item>
+    ///         <item>
+    ///             <description>Displays an error message to the user.</description>
+    ///         </item>
+    ///         <item>
+    ///             <description>Clears the password textbox and resets the status label to idle.</description>
+    ///         </item>
+    ///         <item>
+    ///             <description>Decrements the remaining login attempts and updates the UI label.</description>
+    ///         </item>
+    ///     </list>
+    ///     All sensitive information from the failed login attempt is cleared from memory or UI elements.
     /// </remarks>
     private async Task HandleLogin()
     {
@@ -464,19 +529,19 @@ public sealed partial class PasswordVault : Form
     }
 
     /// <summary>
-    /// Handles UI and state recovery after a failed login attempt.
+    ///     Handles UI and state recovery after a failed login attempt.
     /// </summary>
     /// <remarks>
-    /// This method performs several post-failure recovery steps:
-    /// <list type="number">
-    /// <item>Re-enables login UI controls for retry.</item>
-    /// <item>Updates the status label to indicate failure.</item>
-    /// <item>Cancels the current cancellation token and prepares a new one.</item>
-    /// <item>Displays an error message to the user.</item>
-    /// <item>Clears the password textbox and resets the status label.</item>
-    /// <item>Decrements the remaining login attempt counter and updates the UI.</item>
-    /// </list>
-    /// All sensitive data from the failed login attempt is cleared or reset appropriately.
+    ///     This method performs several post-failure recovery steps:
+    ///     <list type="number">
+    ///         <item>Re-enables login UI controls for retry.</item>
+    ///         <item>Updates the status label to indicate failure.</item>
+    ///         <item>Cancels the current cancellation token and prepares a new one.</item>
+    ///         <item>Displays an error message to the user.</item>
+    ///         <item>Clears the password textbox and resets the status label.</item>
+    ///         <item>Decrements the remaining login attempt counter and updates the UI.</item>
+    ///     </list>
+    ///     All sensitive data from the failed login attempt is cleared or reset appropriately.
     /// </remarks>
     private async void HandleFailedLogin()
     {
@@ -515,11 +580,11 @@ public sealed partial class PasswordVault : Form
     }
 
     /// <summary>
-    /// Starts the login status label animation indicating that the login process is underway.
+    ///     Starts the login status label animation indicating that the login process is underway.
     /// </summary>
     /// <remarks>
-    /// This method asynchronously animates the <c>StatusOutputLabel</c> with the message "Logging in"
-    /// using a cancellation token to allow interruption if the login process is canceled.
+    ///     This method asynchronously animates the <c>StatusOutputLabel</c> with the message "Logging in"
+    ///     using a cancellation token to allow interruption if the login process is canceled.
     /// </remarks>
     private async void StartAnimation()
     {
@@ -527,15 +592,17 @@ public sealed partial class PasswordVault : Form
     }
 
     /// <summary>
-    /// Starts asynchronous rainbow-colored text animations on all welcome labels across different UI sections.
+    ///     Starts asynchronous rainbow-colored text animations on all welcome labels across different UI sections.
     /// </summary>
     /// <remarks>
-    /// This method launches parallel label animations using the <see cref="UiController.Animations.RainbowLabel"/> method
-    /// for the main welcome label and additional welcome labels in the Register, Vault, Encryption, and File Hash control sections.
-    /// If any exception occurs during the animations, it is caught and logged using <see cref="ErrorLogging.ErrorLog(Exception)"/>.
+    ///     This method launches parallel label animations using the <see cref="UiController.Animations.RainbowLabel" /> method
+    ///     for the main welcome label and additional welcome labels in the Register, Vault, Encryption, and File Hash control
+    ///     sections.
+    ///     If any exception occurs during the animations, it is caught and logged using
+    ///     <see cref="ErrorLogging.ErrorLog(Exception)" />.
     /// </remarks>
     /// <exception cref="Exception">
-    /// Any unexpected exception during label animation will be caught and logged internally.
+    ///     Any unexpected exception during label animation will be caught and logged internally.
     /// </exception>
     private async void StartRainbowAnimation()
     {
@@ -559,24 +626,34 @@ public sealed partial class PasswordVault : Form
     }
 
     /// <summary>
-    /// Handles the <c>Load</c> event for the <c>PasswordVault</c> form.
-    /// Initializes UI visibility, cryptographic settings, and user preferences.
+    ///     Handles the <c>Load</c> event for the <c>PasswordVault</c> form.
+    ///     Initializes UI visibility, cryptographic settings, and user preferences.
     /// </summary>
     /// <param name="sender">The source of the event, typically the form.</param>
-    /// <param name="e">An instance of <see cref="EventArgs"/> containing the event data.</param>
+    /// <param name="e">An instance of <see cref="EventArgs" /> containing the event data.</param>
     /// <remarks>
-    /// This method performs the following initialization steps:
-    /// <list type="number">
-    /// <item><description>Hides all welcome labels across different control sections.</description></item>
-    /// <item><description>Initializes cryptographic settings using application defaults.</description></item>
-    /// <item><description>Checks the stored username setting and sets the login fields accordingly.</description></item>
-    /// <item><description>If no username is stored, clears the username field and disables "Remember Me."</description></item>
-    /// <item><description>If a username is stored, populates it and checks the "Remember Me" checkbox.</description></item>
-    /// </list>
-    /// All exceptions are caught and logged, and an error message is displayed to the user.
+    ///     This method performs the following initialization steps:
+    ///     <list type="number">
+    ///         <item>
+    ///             <description>Hides all welcome labels across different control sections.</description>
+    ///         </item>
+    ///         <item>
+    ///             <description>Initializes cryptographic settings using application defaults.</description>
+    ///         </item>
+    ///         <item>
+    ///             <description>Checks the stored username setting and sets the login fields accordingly.</description>
+    ///         </item>
+    ///         <item>
+    ///             <description>If no username is stored, clears the username field and disables "Remember Me."</description>
+    ///         </item>
+    ///         <item>
+    ///             <description>If a username is stored, populates it and checks the "Remember Me" checkbox.</description>
+    ///         </item>
+    ///     </list>
+    ///     All exceptions are caught and logged, and an error message is displayed to the user.
     /// </remarks>
     /// <exception cref="Exception">
-    /// Any unhandled exception during initialization will be caught and logged internally.
+    ///     Any unhandled exception during initialization will be caught and logged internally.
     /// </exception>
     private void PasswordVault_Load(object sender, EventArgs e)
     {
@@ -586,7 +663,7 @@ public sealed partial class PasswordVault : Form
                 Vars.VaultControls.WelcomeLabel,
                 Vars.EncryptionControls.WelcomeLabel, Vars.FileHashControls.WelcomeLabel);
 
-           // PasswordTxt.PasswordChar = '●';
+            // PasswordTxt.PasswordChar = '●';
             CryptoSettings.Iterations = Settings.Default.Iterations;
             CryptoSettings.MemSize = Settings.Default.MemorySize;
             CryptoSettings.Parallelism = Settings.Default.Parallelism;
@@ -611,26 +688,40 @@ public sealed partial class PasswordVault : Form
     }
 
     /// <summary>
-    /// Handles the <c>Click</c> event of the <c>LogoutBtn</c> button.
-    /// Performs logout operations including state cleanup, UI reset, and cancellation of background tasks.
+    ///     Handles the <c>Click</c> event of the <c>LogoutBtn</c> button.
+    ///     Performs logout operations including state cleanup, UI reset, and cancellation of background tasks.
     /// </summary>
     /// <param name="sender">The source of the event, typically the <c>LogoutBtn</c> control.</param>
-    /// <param name="e">An instance of <see cref="EventArgs"/> containing the event data.</param>
+    /// <param name="e">An instance of <see cref="EventArgs" /> containing the event data.</param>
     /// <remarks>
-    /// This method performs the following operations:
-    /// <list type="number">
-    /// <item><description>Verifies that a user is currently logged in.</description></item>
-    /// <item><description>Clears the vault contents and resets the current user state.</description></item>
-    /// <item><description>Disposes of cryptographic key material and secure memory buffers.</description></item>
-    /// <item><description>Re-enables login UI elements for future login attempts.</description></item>
-    /// <item><description>Cancels and resets the rainbow label animation task.</description></item>
-    /// <item><description>Clears the password input field and displays a logout confirmation.</description></item>
-    /// <item><description>Hides all welcome labels and resets the login status label.</description></item>
-    /// </list>
-    /// If an error occurs during the logout process, it is caught, logged, and displayed to the user.
+    ///     This method performs the following operations:
+    ///     <list type="number">
+    ///         <item>
+    ///             <description>Verifies that a user is currently logged in.</description>
+    ///         </item>
+    ///         <item>
+    ///             <description>Clears the vault contents and resets the current user state.</description>
+    ///         </item>
+    ///         <item>
+    ///             <description>Disposes of cryptographic key material and secure memory buffers.</description>
+    ///         </item>
+    ///         <item>
+    ///             <description>Re-enables login UI elements for future login attempts.</description>
+    ///         </item>
+    ///         <item>
+    ///             <description>Cancels and resets the rainbow label animation task.</description>
+    ///         </item>
+    ///         <item>
+    ///             <description>Clears the password input field and displays a logout confirmation.</description>
+    ///         </item>
+    ///         <item>
+    ///             <description>Hides all welcome labels and resets the login status label.</description>
+    ///         </item>
+    ///     </list>
+    ///     If an error occurs during the logout process, it is caught, logged, and displayed to the user.
     /// </remarks>
     /// <exception cref="Exception">
-    /// Thrown when attempting to log out without any user currently logged in.
+    ///     Thrown when attempting to log out without any user currently logged in.
     /// </exception>
     private async void LogoutBtn_Click(object sender, EventArgs e)
     {
@@ -658,11 +749,7 @@ public sealed partial class PasswordVault : Form
             MessageBox.Show("User successfully logged out.", "Success", MessageBoxButtons.OK,
                 MessageBoxIcon.Information);
 
-            UiController.LogicMethods.DisableVisibility(WelcomeLabel, Vars.RegisterControls.WelcomeLabel,
-                Vars.VaultControls.WelcomeLabel,
-                Vars.EncryptionControls.WelcomeLabel, Vars.FileHashControls.WelcomeLabel);
-            StatusOutputLabel.Text = "Idle...";
-            StatusOutputLabel.ForeColor = Color.White;
+            Application.Exit();
         }
         catch (Exception ex)
         {

@@ -1,5 +1,7 @@
 ﻿using System.Diagnostics;
 using System.Runtime.InteropServices;
+using System.Text;
+using Windows.Security.Credentials;
 using static Password_Vault_V2.Crypto;
 
 namespace Password_Vault_V2;
@@ -107,7 +109,8 @@ public sealed partial class Register : UserControl
         byte[]? password, byte[]? confirmPassword, char[]? passwordChars, char[]? confirmPasswordChars,
         byte[]? passwordHash, byte[]? passwordDerivedKey, byte[]? uuid, byte[]? encryptedMasterKey,
         byte[]? encryptionKey,
-        byte[]? hashSalt, byte[]? userFileSalt, byte[]? intermediateKeySalt, byte[]? masterKeySalt)
+        byte[]? hashSalt, byte[]? userFileSalt, byte[]? intermediateKeySalt, byte[]? masterKeySalt, byte[]? intermediateKey, byte[]? masterKey,
+                   byte[]? derivedFileKey, byte[]? derivedHmacKey, byte[]? hmacKey)
     {
         static void ClearWithGCHandle<T>(params T[]?[] arrays) where T : unmanaged
         {
@@ -133,7 +136,8 @@ public sealed partial class Register : UserControl
         // Clear byte[] and char[] arrays safely
         ClearWithGCHandle(password, confirmPassword, passwordHash, passwordDerivedKey,
             uuid, encryptedMasterKey, encryptionKey,
-            hashSalt, userFileSalt, intermediateKeySalt, masterKeySalt);
+            hashSalt, userFileSalt, intermediateKeySalt, masterKeySalt, intermediateKey, masterKey, derivedFileKey, derivedHmacKey,
+            hmacKey);
 
         ClearWithGCHandle(passwordChars, confirmPasswordChars);
 
@@ -146,14 +150,13 @@ public sealed partial class Register : UserControl
         }
     }
 
-
     /// <summary>
-    /// Starts the label animation indicating that account creation is in progress.
+    ///     Starts the label animation indicating that account creation is in progress.
     /// </summary>
     /// <remarks>
-    /// Cancels any previously running animation by signaling its cancellation token,
-    /// then creates a new <see cref="CancellationTokenSource"/> and begins animating
-    /// the label with the text "Creating account".
+    ///     Cancels any previously running animation by signaling its cancellation token,
+    ///     then creates a new <see cref="CancellationTokenSource" /> and begins animating
+    ///     the label with the text "Creating account".
     /// </remarks>
     private void StartAnimation()
     {
@@ -164,19 +167,19 @@ public sealed partial class Register : UserControl
     }
 
     /// <summary>
-    /// Stops the label animation started by <see cref="StartAnimation"/> asynchronously.
+    ///     Stops the label animation started by <see cref="StartAnimation" /> asynchronously.
     /// </summary>
     /// <returns>
-    /// A <see cref="Task"/> representing the asynchronous operation of canceling the animation
-    /// and waiting for it to complete.
+    ///     A <see cref="Task" /> representing the asynchronous operation of canceling the animation
+    ///     and waiting for it to complete.
     /// </returns>
     /// <remarks>
-    /// Attempts to cancel the current animation using the associated cancellation token,
-    /// waits for the animation task to complete, handles expected and unexpected exceptions,
-    /// and disposes of the cancellation token source.
+    ///     Attempts to cancel the current animation using the associated cancellation token,
+    ///     waits for the animation task to complete, handles expected and unexpected exceptions,
+    ///     and disposes of the cancellation token source.
     /// </remarks>
     /// <exception cref="Exception">
-    /// Logs and shows a message box for any unexpected exceptions during cancellation or awaiting the animation task.
+    ///     Logs and shows a message box for any unexpected exceptions during cancellation or awaiting the animation task.
     /// </exception>
     private async Task StopAnimationAsync()
     {
@@ -230,10 +233,12 @@ public sealed partial class Register : UserControl
 
         char[]? passwordChars = null, confirmPasswordChars = null;
 
-        byte[]? passwordHash = null, passwordDerivedKey = null;
+        byte[]? passwordHash = null, passwordDerivedKey = null, intermediateKey = null, masterKey = null, decryptedBytes = null, derivedFileKey = null, fileKeySalt = null,
+            decryptedMasterKey = null, keyDerivationSalt = null, encryptionKeySalt = null, masterKeyEncryptionSalt = null,
+            fileSalt = null, hmacKey = null, derivedHmacKey = null, hmacSalt = null, derivedHmacSalt = null;
         byte[]? encryptedMasterKey = null;
         byte[]? encryptionKey = null;
-        byte[]? hashSalt = null, userFileSalt = null, masterKeySalt = null, intermediateKeySalt = null;
+        byte[]? hashSalt = null, masterKeySalt = null, intermediateKeySalt = null;
         byte[]? uuid = null;
 
         try
@@ -244,32 +249,39 @@ public sealed partial class Register : UserControl
 
             // Generate salts and UUID
             hashSalt = CryptoUtilities.RndByteSized(CryptoConstants.SaltSize);
-            userFileSalt = CryptoUtilities.RndByteSized(CryptoConstants.SaltSize);
             masterKeySalt = CryptoUtilities.RndByteSized(CryptoConstants.SaltSize);
+            masterKeyEncryptionSalt = CryptoUtilities.RndByteSized(CryptoConstants.SaltSize);
+            fileSalt = CryptoUtilities.RndByteSized(CryptoConstants.SaltSize);
+            encryptionKeySalt = CryptoUtilities.RndByteSized(CryptoConstants.SaltSize);
+            keyDerivationSalt = CryptoUtilities.RndByteSized(CryptoConstants.SaltSize);
             intermediateKeySalt = CryptoUtilities.RndByteSized(CryptoConstants.SaltSize);
-            var keyDerivationSalt = CryptoUtilities.RndByteSized(CryptoConstants.SaltSize);
-            var hkdfSalt = CryptoUtilities.RndByteSized(CryptoConstants.SaltSize);
+            fileKeySalt = CryptoUtilities.RndByteSized(CryptoConstants.SaltSize);
+            hmacSalt = CryptoUtilities.RndByteSized(CryptoConstants.SaltSize);
+            derivedHmacSalt = CryptoUtilities.RndByteSized(CryptoConstants.SaltSize);
             uuid = Guid.NewGuid().ToByteArray();
 
-            UserCryptoParameters.HkdfSalt = hkdfSalt;
             IO.CreateUserPath(username);
 
             // Key derivation
             passwordHash = await HashingMethods.Argon2Id(password, hashSalt, CryptoConstants.PasswordHashSize);
-            var intermediateKey = await HashingMethods.Argon2Id(password, intermediateKeySalt, CryptoConstants.KeySize);
-            var masterKey = HKDF.HkdfDerivePinned(intermediateKey, masterKeySalt, "master key"u8.ToArray(),
-                CryptoConstants.KeySize);
 
             passwordDerivedKey = await HashingMethods.Argon2Id(password, keyDerivationSalt, CryptoConstants.KeySize);
-            encryptedMasterKey = await EncryptFile(masterKey, passwordDerivedKey, hkdfSalt);
+            intermediateKey = HKDF.HkdfDerivePinned(passwordDerivedKey, intermediateKeySalt, "intermediate key"u8.ToArray(), CryptoConstants.KeySize);
+            masterKey = HKDF.HkdfDerivePinned(intermediateKey, masterKeySalt, "master key"u8.ToArray(), CryptoConstants.KeySize);
+            derivedFileKey = await HashingMethods.Argon2Id(password, fileKeySalt, CryptoConstants.KeySize);
+            encryptionKey = HKDF.HkdfDerivePinned(derivedFileKey, encryptionKeySalt, "encryption key"u8.ToArray(), CryptoConstants.KeySize);
+            derivedHmacKey = await HashingMethods.Argon2Id(password, derivedHmacSalt, CryptoConstants.KeySize);
+            hmacKey = HKDF.HkdfDerivePinned(derivedHmacKey, hmacSalt, "hmac key"u8.ToArray(), CryptoConstants.HmacLength);
+            encryptedMasterKey = await EncryptFile(masterKey, intermediateKey, masterKeyEncryptionSalt);
 
             // Build and encrypt user file
-            var userFile = IO.BuildUserFile(hashSalt, uuid, hkdfSalt, keyDerivationSalt, intermediateKeySalt,
-                masterKeySalt, passwordHash, encryptedMasterKey);
-            encryptionKey = await HashingMethods.Argon2Id(password, userFileSalt, CryptoConstants.KeySize);
-            var encryptedUserFile = await EncryptFile(userFile, encryptionKey, hkdfSalt);
+            var userFile = IO.BuildUserFile(passwordHash, uuid, encryptedMasterKey);
+            var encryptedUserFile = await EncryptFile(userFile, encryptionKey, fileSalt);
 
-            var finalFile = userFileSalt.Concat(uuid).Concat(hkdfSalt).Concat(encryptedUserFile).ToArray();
+            var hmac = HashingMethods.HmacSha3(encryptedUserFile, hmacKey);
+
+            var finalFile = hmac.Concat(hmacSalt).Concat(derivedHmacSalt).Concat(fileSalt).Concat(fileKeySalt).Concat(encryptionKeySalt).Concat(uuid).Concat(hashSalt).Concat(masterKeyEncryptionSalt).
+                Concat(keyDerivationSalt).Concat(intermediateKeySalt).Concat(encryptedUserFile).ToArray();
             var path = UserFileManager.GetUserFilePath(username);
 
             await IO.WriteFile(path, finalFile);
@@ -303,7 +315,8 @@ public sealed partial class Register : UserControl
                     passwordChars, confirmPasswordChars,
                     passwordHash, passwordDerivedKey,
                     uuid, encryptedMasterKey, encryptionKey,
-                    hashSalt, userFileSalt, intermediateKeySalt, masterKeySalt);
+                    hashSalt, fileSalt, intermediateKeySalt, masterKeySalt, intermediateKey, masterKey,
+                    derivedFileKey, derivedHmacKey, hmacKey);
 
                 GC.Collect(GC.MaxGeneration, GCCollectionMode.Aggressive, true, true);
                 GC.WaitForPendingFinalizers();
@@ -332,15 +345,15 @@ public sealed partial class Register : UserControl
     }
 
     /// <summary>
-    /// Handles the click event of the <c>CreateAccountBtn</c> button. Initiates the user account registration process,
-    /// displaying a warning about potential data corruption, converting secure password buffers to byte arrays, 
-    /// and invoking <see cref="RegisterAsync"/>. Ensures sensitive data is disposed and cleared from memory.
+    ///     Handles the click event of the <c>CreateAccountBtn</c> button. Initiates the user account registration process,
+    ///     displaying a warning about potential data corruption, converting secure password buffers to byte arrays,
+    ///     and invoking <see cref="RegisterAsync" />. Ensures sensitive data is disposed and cleared from memory.
     /// </summary>
     /// <param name="sender">The source of the event, typically the <c>CreateAccountBtn</c> control.</param>
-    /// <param name="e">An <see cref="EventArgs"/> that contains the event data.</param>
+    /// <param name="e">An <see cref="EventArgs" /> that contains the event data.</param>
     /// <remarks>
-    /// This method warns the user not to close the application during registration, securely handles password data,
-    /// logs any exceptions, and ensures that sensitive data is cleaned up regardless of success or failure.
+    ///     This method warns the user not to close the application during registration, securely handles password data,
+    ///     logs any exceptions, and ensures that sensitive data is cleaned up regardless of success or failure.
     /// </remarks>
     private async void CreateAccountBtn_Click(object sender, EventArgs e)
     {

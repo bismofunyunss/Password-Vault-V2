@@ -237,10 +237,13 @@ public partial class Vault : UserControl
             if (string.IsNullOrEmpty(UserFileManager.CurrentLoggedInUser))
                 throw new Exception("There is no user currently logged in.");
 
-            MessageBox.Show(
+            var confirmResult = MessageBox.Show(
                 "Do NOT close the program while saving. This may cause corrupted data that is NOT recoverable. You may only save once per login." +
                 "You will need to log back in in order to load vault contents.",
                 "Info", MessageBoxButtons.OKCancel, MessageBoxIcon.Exclamation);
+
+            if (confirmResult != DialogResult.Cancel)
+                return;
 
             if (string.IsNullOrEmpty(UserFileManager.CurrentLoggedInUser))
                 throw new Exception("No user is currently logged in.");
