@@ -1,4 +1,5 @@
-﻿using System.Security.Cryptography;
+﻿using System.Drawing.Drawing2D;
+using System.Security.Cryptography;
 using System.Text;
 using static Password_Vault_V2.Crypto;
 
@@ -106,6 +107,8 @@ public partial class Vault : UserControl
     /// </example>
     public async void LoadVault()
     {
+        var masterKey = MasterKey.GetKey();
+
         try
         {
             var filePath = UserFileManager.GetUserVault(UserFileManager.CurrentLoggedInUser);
@@ -113,8 +116,6 @@ public partial class Vault : UserControl
                 throw new FileNotFoundException("Vault file does not exist.");
 
             var encryptedVault = await IO.ReadFile(filePath);
-
-            var masterKey = MasterKey.GetKey();
 
             var decryptedVaultBytes = await DecryptVaultWithSalt(encryptedVault, masterKey);
 
@@ -145,18 +146,25 @@ public partial class Vault : UserControl
         }
         catch (InvalidOperationException ex)
         {
-            MessageBox.Show("An error occured when loading vault file.", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            MessageBox.Show("An error occured when loading vault file.", "Error", MessageBoxButtons.OK,
+                MessageBoxIcon.Error);
             ErrorLogging.ErrorLog(ex);
         }
         catch (CryptographicException ex)
         {
-            MessageBox.Show("A cryptographic error occured when loading vault file.", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            MessageBox.Show("A cryptographic error occured when loading vault file.", "Error", MessageBoxButtons.OK,
+                MessageBoxIcon.Error);
             ErrorLogging.ErrorLog(ex);
         }
         catch (Exception ex)
         {
-            MessageBox.Show("An error occured when loading vault file.", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            MessageBox.Show("An error occured when loading vault file.", "Error", MessageBoxButtons.OK,
+                MessageBoxIcon.Error);
             ErrorLogging.ErrorLog(ex);
+        }
+        finally
+        {
+            CryptoUtilities.ClearMemoryNative(masterKey);
         }
     }
 
@@ -232,6 +240,8 @@ public partial class Vault : UserControl
     /// </exception>
     private async void SaveVaultBtn_Click(object sender, EventArgs e)
     {
+        var masterKey = MasterKey.GetKey();
+
         try
         {
             if (string.IsNullOrEmpty(UserFileManager.CurrentLoggedInUser))
@@ -242,7 +252,7 @@ public partial class Vault : UserControl
                 "You will need to log back in in order to load vault contents.",
                 "Info", MessageBoxButtons.OKCancel, MessageBoxIcon.Exclamation);
 
-            if (confirmResult != DialogResult.Cancel)
+            if (confirmResult == DialogResult.Cancel)
                 return;
 
             if (string.IsNullOrEmpty(UserFileManager.CurrentLoggedInUser))
@@ -252,8 +262,6 @@ public partial class Vault : UserControl
 
             var vaultPlaintext = SerializeVaultToText();
             var vaultBytes = Encoding.UTF8.GetBytes(vaultPlaintext);
-
-            var masterKey = MasterKey.GetKey();
 
             var encryptedVault = await EncryptVaultWithSalt(vaultBytes, masterKey);
 
@@ -278,6 +286,7 @@ public partial class Vault : UserControl
         }
         finally
         {
+            CryptoUtilities.ClearMemoryNative(masterKey);
             EnableUi();
             outputLbl.Text = "Idle...";
             outputLbl.ForeColor = Color.WhiteSmoke;
@@ -311,5 +320,16 @@ public partial class Vault : UserControl
         }
 
         return sb.ToString();
+    }
+
+    private void Vault_Load(object sender, EventArgs e)
+    {
+
+    }
+
+    private void Vault_Paint(object sender, PaintEventArgs e)
+    {
+        e.Graphics.Clear(this.BackColor);  // Clear previous drawings
+        e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
     }
 }

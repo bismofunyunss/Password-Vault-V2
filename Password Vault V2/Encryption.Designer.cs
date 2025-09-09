@@ -41,6 +41,8 @@ namespace Password_Vault_V2
             EncryptBtn = new Button();
             ExportFileBtn = new Button();
             ImportFileBtn = new Button();
+            ProgressLabel = new Label();
+            progressBar = new ProgressBar();
             FileEncryptDecryptBox.SuspendLayout();
             ((ISupportInitialize)pictureBox1).BeginInit();
             SuspendLayout();
@@ -48,6 +50,8 @@ namespace Password_Vault_V2
             // FileEncryptDecryptBox
             // 
             FileEncryptDecryptBox.BackColor = Color.FromArgb(30, 30, 30);
+            FileEncryptDecryptBox.Controls.Add(progressBar);
+            FileEncryptDecryptBox.Controls.Add(ProgressLabel);
             FileEncryptDecryptBox.Controls.Add(pictureBox1);
             FileEncryptDecryptBox.Controls.Add(WelcomeLabel);
             FileEncryptDecryptBox.Controls.Add(FileSizeNumLbl);
@@ -66,7 +70,6 @@ namespace Password_Vault_V2
             FileEncryptDecryptBox.TabIndex = 10;
             FileEncryptDecryptBox.TabStop = false;
             FileEncryptDecryptBox.Text = "File Encryptor / Decryptor";
-            FileEncryptDecryptBox.Enter += FileEncryptDecryptBox_Enter;
             // 
             // pictureBox1
             // 
@@ -82,7 +85,7 @@ namespace Password_Vault_V2
             WelcomeLabel.AutoSize = true;
             WelcomeLabel.Font = new Font("Century Gothic", 11F);
             WelcomeLabel.ForeColor = Color.White;
-            WelcomeLabel.Location = new Point(6, 191);
+            WelcomeLabel.Location = new Point(7, 132);
             WelcomeLabel.Name = "WelcomeLabel";
             WelcomeLabel.Size = new Size(169, 25);
             WelcomeLabel.TabIndex = 20;
@@ -92,7 +95,7 @@ namespace Password_Vault_V2
             // 
             FileSizeNumLbl.AutoSize = true;
             FileSizeNumLbl.Font = new Font("Century Gothic", 11F);
-            FileSizeNumLbl.Location = new Point(121, 241);
+            FileSizeNumLbl.Location = new Point(122, 182);
             FileSizeNumLbl.Name = "FileSizeNumLbl";
             FileSizeNumLbl.Size = new Size(89, 25);
             FileSizeNumLbl.TabIndex = 16;
@@ -102,7 +105,7 @@ namespace Password_Vault_V2
             // 
             FileSizeLbl.AutoSize = true;
             FileSizeLbl.Font = new Font("Century Gothic", 11F);
-            FileSizeLbl.Location = new Point(6, 241);
+            FileSizeLbl.Location = new Point(7, 182);
             FileSizeLbl.Name = "FileSizeLbl";
             FileSizeLbl.Size = new Size(109, 25);
             FileSizeLbl.TabIndex = 15;
@@ -112,7 +115,7 @@ namespace Password_Vault_V2
             // 
             FileOutputLbl.AutoSize = true;
             FileOutputLbl.Font = new Font("Century Gothic", 11F);
-            FileOutputLbl.Location = new Point(104, 216);
+            FileOutputLbl.Location = new Point(105, 157);
             FileOutputLbl.Name = "FileOutputLbl";
             FileOutputLbl.Size = new Size(71, 25);
             FileOutputLbl.TabIndex = 14;
@@ -122,7 +125,7 @@ namespace Password_Vault_V2
             // 
             FileStatusLbl.AutoSize = true;
             FileStatusLbl.Font = new Font("Century Gothic", 11F);
-            FileStatusLbl.Location = new Point(6, 216);
+            FileStatusLbl.Location = new Point(7, 157);
             FileStatusLbl.Name = "FileStatusLbl";
             FileStatusLbl.Size = new Size(94, 25);
             FileStatusLbl.TabIndex = 13;
@@ -196,6 +199,23 @@ namespace Password_Vault_V2
             ImportFileBtn.UseVisualStyleBackColor = false;
             ImportFileBtn.Click += ImportFileBtn_Click;
             // 
+            // ProgressLabel
+            // 
+            ProgressLabel.AutoSize = true;
+            ProgressLabel.Font = new Font("Century Gothic", 11F);
+            ProgressLabel.Location = new Point(7, 207);
+            ProgressLabel.Name = "ProgressLabel";
+            ProgressLabel.Size = new Size(118, 25);
+            ProgressLabel.TabIndex = 22;
+            ProgressLabel.Text = "Progress ::";
+            // 
+            // progressBar
+            // 
+            progressBar.Location = new Point(122, 210);
+            progressBar.Name = "progressBar";
+            progressBar.Size = new Size(241, 22);
+            progressBar.TabIndex = 23;
+            // 
             // Encryption
             // 
             AutoScaleDimensions = new SizeF(10F, 25F);
@@ -221,6 +241,8 @@ namespace Password_Vault_V2
         private Label FileSizeLbl;
         public Label WelcomeLabel;
         private PictureBox pictureBox1;
+        private Label ProgressLabel;
+        private ProgressBar progressBar;
     }
     #endregion
 }

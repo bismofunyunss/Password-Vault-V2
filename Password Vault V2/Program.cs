@@ -1,9 +1,14 @@
+using System.Runtime.InteropServices;
+
 namespace Password_Vault_V2;
 
 internal static class Program
 {
     private static PasswordVault? _mainForm;
+    [DllImport("user32.dll")]
+    private static extern bool SetProcessDpiAwarenessContext(int dpiFlag);
 
+    private const int DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2 = -4;
     [STAThread]
     private static void Main()
     {
@@ -57,9 +62,11 @@ internal static class Program
         };
 
         Application.ApplicationExit += OnApplicationExit;
+        SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
 
+        Application.EnableVisualStyles();
+        Application.SetCompatibleTextRenderingDefault(false);
         // Now start the application
-        ApplicationConfiguration.Initialize();
         _mainForm = new PasswordVault();
         Application.Run(_mainForm);
     }
@@ -70,6 +77,7 @@ internal static class Program
         {
             Crypto.MasterKey.Dispose();
             _mainForm?.Vars.VaultControls.PassVault.Rows.Clear();
+            FipsCrypto.FipsEnabled = false;
         }
         catch (Exception ex)
         {

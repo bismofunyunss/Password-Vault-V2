@@ -1,19 +1,37 @@
+using System.Buffers.Binary;
 using System.Diagnostics;
+using System.Drawing.Drawing2D;
 using System.Runtime.InteropServices;
 using System.Security.Cryptography;
+using Tpm2Lib;
 using static Password_Vault_V2.Crypto;
+using static Password_Vault_V2.FipsCrypto;
 
 namespace Password_Vault_V2;
 
 public sealed partial class PasswordVault : Form
 {
     private readonly SecurePasswordBuffer _passwordBuffer = new();
+    private readonly int borderRadius = 20;
+    private readonly int borderSize = 4;
     public readonly Variables Vars = new();
-
+    private Color borderColor = Color.FromArgb(128, 128, 255);
 
     public PasswordVault()
     {
         InitializeComponent();
+    }
+
+    private void BtnLogin_Paint(object sender, PaintEventArgs e)
+    {
+    }
+
+    private void PasswordVault_Paint(object sender, PaintEventArgs e)
+    {
+        e.Graphics.Clear(BackColor); // Clear background before drawing
+        e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
+        BorderRenderer.DrawSmoothGradientBorder(this, e.Graphics, borderRadius, borderSize, Color.DeepSkyBlue,
+            Color.DeepSkyBlue, Color.DeepSkyBlue, Color.DeepSkyBlue);
     }
 
     #region Variables
@@ -41,241 +59,66 @@ public sealed partial class PasswordVault : Form
 
     #region Methods
 
-    /// <summary>
-    ///     Handles the click event for the login button. Validates input, handles login logic,
-    ///     manages UI state, and displays messages based on success or failure.
-    /// </summary>
-    /// <param name="sender">The source of the event (typically the login button).</param>
-    /// <param name="e">The event data associated with the click event.</param>
-    /// <remarks>
-    ///     This method performs the following actions:
-    ///     <list type="bullet">
-    ///         <item>Converts the password buffer to a byte array.</item>
-    ///         <item>Stores or clears the username in application settings based on the "Remember Me" checkbox.</item>
-    ///         <item>Parses and checks remaining login attempts, preventing login if exhausted.</item>
-    ///         <item>Validates input fields and shows a warning about not closing the application while loading.</item>
-    ///         <item>Disables the UI during login processing.</item>
-    ///         <item>Calls <c>UserFileManager.UserExists</c> and passes result to <c>ProcessLogin</c>.</item>
-    ///         <item>
-    ///             Handles and logs exceptions, updates the UI with failure status, decrements attempt counter, and
-    ///             re-enables controls.
-    ///         </item>
-    ///         <item>
-    ///             Clears the password field, disposes of password buffer, and performs aggressive garbage collection in
-    ///             <c>finally</c>.
-    ///         </item>
-    ///     </list>
-    /// </remarks>
-    /// <exception cref="Exception">
-    ///     Thrown if the username is empty, the password array is null/empty, or if the remaining attempts value is
-    ///     unparsable.
-    /// </exception>
+    #region Event Handlers
+
     private async void BtnLogin_Click(object sender, EventArgs e)
     {
-        var passwordBytesArray = _passwordBuffer.ToByteArray();
-
-        switch (RememberMeCheckBox.Checked)
-        {
-            case true:
-                Settings.Default.userName = UsernameTxt.Text;
-                Settings.Default.Save();
-                break;
-            case false:
-                Settings.Default.userName = string.Empty;
-                Settings.Default.Save();
-                break;
-        }
-
-        var canParse = int.TryParse(AttemptsNumberLabel.Text, out Vars.AttemptsRemaining);
-
-        if (canParse)
-        {
-            if (Vars.AttemptsRemaining == 0)
-            {
-                MessageBox.Show("No attempts remaining. Please restart the program and try again.", "Error",
-                    MessageBoxButtons.OK, MessageBoxIcon.Error);
-                return;
-            }
-        }
-        else
-        {
-            throw new Exception("Unable to parse attempts remaining value.");
-        }
-
         try
         {
-            if (string.IsNullOrEmpty(UsernameTxt.Text))
-                throw new Exception("Username value was empty.");
-            if (passwordBytesArray == null || passwordBytesArray.Length == 0)
-                throw new Exception("Password array was empty or null.");
+            var result = await WindowsHello.RequestWindowsHelloSignInAsync();
+            if (!result)
+            {
+                MessageBox.Show("Windows hello failed to authenticate.", "Error", MessageBoxButtons.OK,
+                    MessageBoxIcon.Error);
+                return;
+            }
 
-            MessageBox.Show(
-                "Do NOT close the program while loading. This may cause corrupted data that is NOT recoverable.",
-                "Info", MessageBoxButtons.OK, MessageBoxIcon.Exclamation);
+            var passwordBytes = ExtractPasswordBytes();
+            SaveRememberMeSetting();
+            ValidateRemainingAttempts();
+            ValidateLoginInputs(passwordBytes);
 
+            ShowLoadingWarning();
             UiController.LogicMethods.DisableUi(UsernameTxt, PasswordTxt, BtnLogin, LogoutBtn);
 
             var userExists = UserFileManager.UserExists(UsernameTxt.Text.Trim());
-
             await ProcessLogin(userExists);
         }
         catch (Exception ex)
         {
-            ErrorLogging.ErrorLog(ex);
-            await Vars.TokenSource.CancelAsync();
-
-            if (Vars.TokenSource.IsCancellationRequested)
-            {
-                Vars.TokenSource.Dispose();
-                Vars.TokenSource = new CancellationTokenSource();
-            }
-
-            StatusOutputLabel.Text = "Login failed.";
-            StatusOutputLabel.ForeColor = Color.Red;
-
-            MessageBox.Show(ex.Message, "Error", MessageBoxButtons.OK,
-                MessageBoxIcon.Error);
-
-            Vars.AttemptsRemaining--;
-            AttemptsNumberLabel.Text = Vars.AttemptsRemaining.ToString();
-            StatusOutputLabel.ForeColor = Color.White;
-            StatusOutputLabel.Text = "Idle...";
-            UiController.LogicMethods.EnableUi(UsernameTxt, PasswordTxt, BtnLogin, LogoutBtn);
+            HandleLoginException(ex);
         }
         finally
         {
-            PasswordTxt.Clear();
-            _passwordBuffer.Dispose();
+            ClearPasswordBuffer();
         }
     }
 
-    /// <summary>
-    ///     Processes the login attempt based on whether the user exists.
-    /// </summary>
-    /// <param name="userExists">
-    ///     A boolean value indicating whether the user exists in the system.
-    /// </param>
-    /// <returns>
-    ///     A <see cref="Task" /> representing the asynchronous operation.
-    /// </returns>
-    /// <remarks>
-    ///     If <paramref name="userExists" /> is <c>true</c>, the method starts the asynchronous login process.
-    ///     If <paramref name="userExists" /> is <c>false</c>, it triggers a response indicating that the user does not exist.
-    /// </remarks>
+    #endregion
+
+    #region Core Login Flow
+
     private async Task ProcessLogin(bool userExists)
     {
-        switch (userExists)
-        {
-            case true:
-                await StartLoginProcessAsync();
-                break;
-            case false:
-                UserDoesNotExist();
-                break;
-        }
+        if (userExists)
+            await StartLoginProcessAsync();
+        else
+            throw new Exception("Username does not exist.");
     }
 
-    /// <summary>
-    ///     Parses a decrypted user file into its component byte array segments.
-    ///     Each segment is expected to be prefixed by a 4-byte integer indicating the segment's length.
-    ///     <br /><br />
-    ///     <b>Example usage:</b>
-    ///     <code>
-    /// byte[] decrypted = DecryptFile(...);
-    /// byte[][] parts = ParseUserFile(decrypted);
-    /// </code>
-    /// </summary>
-    /// <param name="decryptedBytes">
-    ///     A byte array representing the decrypted contents of a user file. The file must consist of
-    ///     sequential blocks prefixed with 4-byte length headers.
-    /// </param>
-    /// <returns>
-    ///     An array of <see cref="byte[]" /> where each entry represents one segment from the original byte stream.
-    /// </returns>
-    /// <exception cref="EndOfStreamException">
-    ///     Thrown if a declared length exceeds the remaining data, indicating a malformed or truncated file.
-    /// </exception>
-    private static byte[][] ParseUserFile(byte[] decryptedBytes)
-    {
-        var parts = new List<byte[]>();
-        using var ms = new MemoryStream(decryptedBytes);
-        using var reader = new BinaryReader(ms);
-
-        while (ms.Position < ms.Length)
-        {
-            var length = reader.ReadInt32();
-            var part = reader.ReadBytes(length);
-            parts.Add(part);
-        }
-
-        return [.. parts];
-    }
-
-
-    /// <summary>
-    ///     Begins the secure login process by reading and validating a user's encrypted file,
-    ///     verifying the password, and loading cryptographic parameters into memory.
-    ///     <br /><br />
-    ///     <b>Example usage:</b>
-    ///     <code>
-    /// await StartLoginProcessAsync();
-    /// </code>
-    /// </summary>
-    /// <remarks>
-    ///     This method performs several sequential steps:
-    ///     <list type="number">
-    ///         <item>Initializes the cancellation token if needed and sets process priority.</item>
-    ///         <item>Starts a UI animation and extracts the password bytes.</item>
-    ///         <item>Reads the encrypted user file from disk and parses out salts, UUIDs, and encrypted data.</item>
-    ///         <item>Uses Argon2id to derive the file decryption key and decrypts the user file.</item>
-    ///         <item>Validates password hash and UUID integrity checks to ensure data hasn't been tampered with.</item>
-    ///         <item>Derives a password-based key to decrypt the master key used for future cryptographic operations.</item>
-    ///         <item>If successful, updates application state and securely stores the master key in memory.</item>
-    ///     </list>
-    ///     Sensitive buffers are securely cleared in the <c>finally</c> block to prevent memory disclosure.
-    /// </remarks>
-    /// <exception cref="UnauthorizedAccessException">
-    ///     Thrown if password validation or file integrity checks (UUID/HKDF salt mismatch) fail.
-    /// </exception>
-    /// <exception cref="FileNotFoundException">
-    ///     Thrown if the user file is missing critical cryptographic segments.
-    /// </exception>
-    /// <exception cref="Exception">
-    ///     May throw other exceptions for unexpected conditions, such as null/empty password or memory issues.
-    /// </exception>
     private async Task StartLoginProcessAsync()
     {
-        if (Vars.TokenSource.IsCancellationRequested)
-            Vars.TokenSource = new CancellationTokenSource();
-
+        var cts = PrepareCancellationToken();
         Process.GetCurrentProcess().PriorityClass = ProcessPriorityClass.Normal;
         StartAnimation();
 
-        var passwordBytes = _passwordBuffer.ToByteArray();
+        var passwordBytes = ExtractPasswordBytes();
 
         // Sensitive working memory
-        byte[]
-            derivedHash = [],
-            decryptedBytes = [],
-            uuidBytes = [],
-            hmac = [],
-            hmacSalt = [],
-            derivedHmacSalt = [],
-            fileSalt = [],
-            fileKeySalt = [],
-            fileKey = [],
-            derivedHmacKey = [],
-            hmacKey = [],
-            encryptionKey = [],
-            hashSalt = [],
-            masterKeySalt = [],
-            masterKeyEncryptionSalt = [],
-            encryptionKeySalt = [],
-            keyDerivationSalt = [],
-            intermediateKeySalt = [],
-            userFile = [],
-            derivedFileKey = [],
+        byte[] decryptedBytes = [],
             passwordDerivedKey = [],
+            derivedFileKey = [],
+            encryptionKey = [],
             intermediateKey = [],
             decryptedMasterKey = [];
 
@@ -284,155 +127,364 @@ public sealed partial class PasswordVault : Form
 
         try
         {
-            var userName = UsernameTxt.Text;
+            var keyStore = new SoftwareKeyStore(UserFileManager.GetUserFolder(UsernameTxt.Text));
 
-            // Step 1: Read user file
-            userFile = await IO.ReadFile(UserFileManager.GetUserFilePath(userName));
-            if (userFile.Length < CryptoConstants.SaltSize * 2 + CryptoConstants.UuidSize)
-                throw new FileNotFoundException("User data is incomplete or corrupted.");
+            var useFips = FipsEnabled;
 
-            var offset = 0;
+            // Load and parse file
+            var userFile = await LoadUserFile(UsernameTxt.Text, useFips);
 
-            // Extract hmac
-            hmac = new byte[CryptoConstants.HmacLength];
-            Buffer.BlockCopy(userFile, offset, hmac, 0, hmac.Length);
-            offset += hmac.Length;
+            var segments = useFips
+                ? ExtractFileSegmentsFips(userFile)
+                : ExtractFileSegmentsNonFips(userFile);
 
-            // Extract hmac salt
-            hmacSalt = new byte[CryptoConstants.SaltSize];
-            Buffer.BlockCopy(userFile, offset, hmacSalt, 0, hmacSalt.Length);
-            offset += hmacSalt.Length;
+            // Derive keys
+            var keys = useFips
+                ? await DeriveKeysFips(passwordBytes, segments)
+                : await DeriveKeys(passwordBytes, segments);
 
-            // Extract derived hmac salt
-            derivedHmacSalt = new byte[CryptoConstants.SaltSize];
-            Buffer.BlockCopy(userFile, offset, derivedHmacSalt, 0, derivedHmacSalt.Length);
-            offset += derivedHmacSalt.Length;
+            if (!useFips)
+                ValidateHmac(segments.EncryptedFile, keys.HmacKey, segments.Hmac);
 
-            // Extract file salt   
-            fileSalt = new byte[CryptoConstants.SaltSize];
-            Buffer.BlockCopy(userFile, offset, fileSalt, 0, fileSalt.Length);
-            offset += fileSalt.Length;
+            // Dont need to validate hmac with FIPS since the internal decrypt will throw on mismatch.
 
-            // Extract file key salt
-            fileKeySalt = new byte[CryptoConstants.SaltSize];
-            Buffer.BlockCopy(userFile, offset, fileKeySalt, 0, fileKeySalt.Length);
-            offset += fileKeySalt.Length;
+                // Decrypt main file
+                decryptedBytes = useFips
+                    ? SimpleAesHmac.Decrypt(keys.EncryptionKey, keys.HmacKey, segments.EncryptedFile)
+                    : await DecryptFile(segments.EncryptedFile, keys.EncryptionKey, segments.FileSalt);
 
-            encryptionKeySalt = new byte[CryptoConstants.SaltSize];
-            Buffer.BlockCopy(userFile, offset, encryptionKeySalt, 0, encryptionKeySalt.Length);
-            offset += encryptionKeySalt.Length;
-
-            // Extract uuid
-            uuidBytes = new byte[CryptoConstants.UuidSize];
-            Buffer.BlockCopy(userFile, offset, uuidBytes, 0, uuidBytes.Length);
-            offset += uuidBytes.Length;
-
-            // Extract hash salt
-            hashSalt = new byte[CryptoConstants.SaltSize];
-            Buffer.BlockCopy(userFile, offset, hashSalt, 0, hashSalt.Length);
-            offset += hashSalt.Length;
-
-            // Extract master key encryption salt
-            masterKeyEncryptionSalt = new byte[CryptoConstants.SaltSize];
-            Buffer.BlockCopy(userFile, offset, masterKeyEncryptionSalt, 0, masterKeyEncryptionSalt.Length);
-            offset += masterKeyEncryptionSalt.Length;
-
-            // Extract key derivation salt
-            keyDerivationSalt = new byte[CryptoConstants.SaltSize];
-            Buffer.BlockCopy(userFile, offset, keyDerivationSalt, 0, keyDerivationSalt.Length);
-            offset += keyDerivationSalt.Length;
-
-            // Extract intermediate key salt
-            intermediateKeySalt = new byte[CryptoConstants.SaltSize];
-            Buffer.BlockCopy(userFile, offset, intermediateKeySalt, 0, intermediateKeySalt.Length);
-            offset += intermediateKeySalt.Length;
-
-            // Extract ciphertext
-            var encryptedFile = new byte[userFile.Length -  offset];
-            Buffer.BlockCopy(userFile, offset, encryptedFile, 0, encryptedFile.Length);
-
-            passwordDerivedKey = await HashingMethods.Argon2Id(passwordBytes, keyDerivationSalt, CryptoConstants.KeySize);
-            derivedFileKey = await HashingMethods.Argon2Id(passwordBytes, fileKeySalt, CryptoConstants.KeySize);
-            derivedHmacKey = await HashingMethods.Argon2Id(passwordBytes, derivedHmacSalt, CryptoConstants.KeySize);
-            hmacKey = Crypto.HKDF.HkdfDerivePinned(derivedHmacKey, hmacSalt, "hmac key"u8.ToArray(), CryptoConstants.HmacLength);
-            intermediateKey = Crypto.HKDF.HkdfDerivePinned(passwordDerivedKey, intermediateKeySalt, "intermediate key"u8.ToArray(), CryptoConstants.KeySize);
-            encryptionKey = Crypto.HKDF.HkdfDerivePinned(derivedFileKey, encryptionKeySalt, "encryption key"u8.ToArray(), CryptoConstants.KeySize);
-
-            var calculatedHmac = HashingMethods.HmacSha3(encryptedFile, hmacKey);
-            if (!CryptographicOperations.FixedTimeEquals(hmac, calculatedHmac))
-                throw new CryptographicException("Authentication tag does not amtch.");
-
-            // Step 3: Decrypt user file
-            decryptedBytes = await DecryptFile(encryptedFile, encryptionKey, fileSalt);
-
-            // Step 4: Parse decrypted data
+            // Parse decrypted file
             var parts = ParseUserFile(decryptedBytes);
 
-            var passwordHash = parts[0];
-            var storedUuid = parts[1];
-            var encryptedMasterKey = parts[2];
+            // Verify identity
+            VerifyUuid(parts[1], segments.Uuid);
+            if (!useFips)
+                VerifyPassword(passwordBytes, parts[0], segments.HashSalt);
+            else
+                VerifyPasswordFips(passwordBytes, parts[0], segments.HashSalt);
 
-            // Final check
-            if (!CryptographicOperations.FixedTimeEquals(storedUuid, uuidBytes))
-                throw new UnauthorizedAccessException("UUID does not match.");
+            // Decrypt master key
+            decryptedMasterKey = useFips
+                ? keyStore.RetrieveMasterKey(keys.IntermediateKey, 1)
+                : await DecryptFile(parts[3], keys.IntermediateKey, segments.MasterKeySalt);
 
-            // Verify password hash
-            derivedHash = await HashingMethods.Argon2Id(passwordBytes, hashSalt, CryptoConstants.HmacLength);
-
-            if (!CryptoUtilities.ComparePassword(derivedHash, passwordHash))
-            {
-                await Task.Delay(300);
-                throw new UnauthorizedAccessException("Invalid password.");
-            }
-
-            // Set current user
-            UserFileManager.CurrentLoggedInUser = userName;
-
-            decryptedMasterKey =
-                await DecryptFile(encryptedMasterKey, intermediateKey, masterKeyEncryptionSalt);
-
+            // Secure master key
             MasterKey.SecureKey(decryptedMasterKey);
 
+            // Finish login
             await HandleLogin();
-        }
 
+        }
         finally
         {
-#pragma warning disable
-            // Sanitize sensitive memory
-            CryptoUtilities.ClearMemoryNative(uuidBytes, derivedHash, fileKey,
-                passwordBytes, decryptedBytes, passwordDerivedKey,
-                decryptedMasterKey, userFile, UserCryptoParameters.EncryptedMasterKey, UserCryptoParameters.HashSalt,
-                UserCryptoParameters.IntermediateKeySalt, UserCryptoParameters.KeyDerivationSalt,
-                UserCryptoParameters.MasterKeySalt, UserCryptoParameters.PasswordHash,
-                UserCryptoParameters.UUID, UserCryptoParameters.UserFileSalt, UserCryptoParameters.HkdfSalt);
+            CryptoUtilities.ClearMemoryNative(passwordBytes, decryptedBytes, passwordDerivedKey,
+                derivedFileKey, encryptionKey, intermediateKey, decryptedMasterKey);
             CryptoUtilities.FreeArrays(handles);
-#pragma warning restore
-            // UI Cleanup
+
             StatusOutputLabel.Text = "Idle...";
             StatusOutputLabel.ForeColor = Color.White;
             PasswordTxt.Clear();
 
-            // Force garbage collection
             GC.Collect(GC.MaxGeneration, GCCollectionMode.Aggressive, true, true);
             GC.WaitForPendingFinalizers();
         }
     }
 
-    /// <summary>
-    ///     Handles the case when a user does not exist in the system.
-    /// </summary>
-    /// <exception cref="Exception">
-    ///     Thrown to indicate that the specified username does not exist.
-    /// </exception>
-    /// <remarks>
-    ///     This method throws a generic <see cref="Exception" /> with a message indicating that
-    ///     the username was not found. It is typically used to halt further login processing.
-    /// </remarks>
-    private static void UserDoesNotExist()
+    #endregion
+
+    #region Extraction & Validation Helpers
+
+    private static CancellationToken PrepareCancellationToken()
     {
-        throw new Exception("Username does not exist.");
+        var cts = new CancellationTokenSource();
+        // Optional: configure timeout or link to external token here
+        return cts.Token;
     }
+
+    private byte[] ExtractPasswordBytes()
+    {
+        return _passwordBuffer.ToByteArray();
+    }
+
+    private void SaveRememberMeSetting()
+    {
+        Settings.Default.userName = RememberMeCheckBox.Checked ? UsernameTxt.Text : string.Empty;
+        Settings.Default.Save();
+    }
+
+    public static byte[][] ParseUserFile(byte[] userFile)
+    {
+        if (userFile == null) throw new ArgumentNullException(nameof(userFile));
+
+        var segments = new List<byte[]>();
+        int offset = 0;
+
+        while (offset < userFile.Length)
+        {
+            if (offset + 4 > userFile.Length)
+                throw new CryptographicException("Corrupted user file: cannot read segment length.");
+
+            int length = BitConverter.ToInt32(userFile, offset); // little-endian
+            offset += 4;
+
+            if (length < 0 || offset + length > userFile.Length)
+                throw new CryptographicException("Corrupted user file: invalid segment length.");
+
+            var segment = new byte[length];
+            Buffer.BlockCopy(userFile, offset, segment, 0, length);
+            segments.Add(segment);
+            offset += length;
+        }
+
+        return segments.ToArray();
+    }
+
+
+    private void ValidateRemainingAttempts()
+    {
+        if (!int.TryParse(AttemptsNumberLabel.Text, out Vars.AttemptsRemaining))
+            throw new Exception("Unable to parse attempts remaining value.");
+
+        if (Vars.AttemptsRemaining == 0)
+            throw new Exception("No attempts remaining. Please restart the program and try again.");
+    }
+
+    private void ValidateLoginInputs(byte[] passwordBytes)
+    {
+        if (string.IsNullOrEmpty(UsernameTxt.Text))
+            throw new Exception("Username value was empty.");
+
+        if (passwordBytes == null || passwordBytes.Length == 0)
+            throw new Exception("Password array was empty or null.");
+    }
+
+    private void ShowLoadingWarning()
+    {
+        MessageBox.Show(
+            "Do NOT close the program while loading. This may cause corrupted data that is NOT recoverable.",
+            "Info", MessageBoxButtons.OK, MessageBoxIcon.Exclamation);
+    }
+
+    #endregion
+
+    #region File & Key Handling
+
+    private async Task<byte[]> LoadUserFile(string username, bool useFips)
+    {
+        var path = UserFileManager.GetUserFilePath(username);
+        var file = await IO.ReadFile(path);
+
+        // Pick correct salt size
+        var saltSize = useFips ? 32 : CryptoConstants.SaltSize;
+
+        // Minimum length = 2 salts + UUID
+        if (file.Length < saltSize * 2 + CryptoConstants.UuidSize)
+            throw new FileNotFoundException("User data is incomplete or corrupted.");
+
+        return file;
+    }
+
+    private (byte[] Hmac, byte[] HmacSalt, byte[] DerivedHmacSalt,
+            byte[] FileSalt, byte[] FileKeySalt, byte[] EncryptionKeySalt,
+            byte[] Uuid, byte[] HashSalt, byte[] MasterKeySalt, byte[] MasterKeyEncryptionSalt,
+            byte[] KeyDerivationSalt, byte[] IntermediateKeySalt, byte[] EncryptedFile)
+       ExtractFileSegmentsNonFips(byte[] file)
+    {
+        int offset = 0;
+        byte[] ReadSegment(int length)
+        {
+            var segment = new byte[length];
+            Buffer.BlockCopy(file, offset, segment, 0, length);
+            offset += length;
+            return segment;
+        }
+
+        var hmac = ReadSegment(CryptoConstants.HmacLength);
+        var hmacSalt = ReadSegment(CryptoConstants.SaltSize);
+        var derivedHmacSalt = ReadSegment(CryptoConstants.SaltSize);
+        var fileSalt = ReadSegment(CryptoConstants.SaltSize);
+        var fileKeySalt = ReadSegment(CryptoConstants.SaltSize);
+        var encryptionKeySalt = ReadSegment(CryptoConstants.SaltSize);
+        var uuid = ReadSegment(CryptoConstants.UuidSize);
+        var hashSalt = ReadSegment(CryptoConstants.SaltSize);
+        var masterKeyEncryptionSalt = ReadSegment(CryptoConstants.SaltSize);
+        var keyDerivationSalt = ReadSegment(CryptoConstants.SaltSize);
+        var intermediateKeySalt = ReadSegment(CryptoConstants.SaltSize);
+        var masterKeySalt = ReadSegment(CryptoConstants.SaltSize);
+
+        var encryptedFile = new byte[file.Length - offset];
+        Buffer.BlockCopy(file, offset, encryptedFile, 0, encryptedFile.Length);
+
+        return (hmac, hmacSalt, derivedHmacSalt, fileSalt, fileKeySalt, encryptionKeySalt,
+                uuid, hashSalt, masterKeySalt, masterKeyEncryptionSalt,
+                keyDerivationSalt, intermediateKeySalt, encryptedFile);
+    }
+
+    private (byte[] Hmac, byte[] HmacSalt, byte[] DerivedHmacSalt,
+             byte[] FileSalt, byte[] FileKeySalt, byte[] EncryptionKeySalt,
+             byte[] Uuid, byte[] HashSalt, byte[] MasterKeySalt, byte[] MasterKeyEncryptionSalt,
+             byte[] KeyDerivationSalt, byte[] IntermediateKeySalt, byte[] EncryptedFile)
+        ExtractFileSegmentsFips(byte[] file)
+    {
+        int offset = 0;
+        int saltSize = 32; // PBKDF2 FIPS salts
+
+        byte[] ReadSegment(int length)
+        {
+            var segment = new byte[length];
+            Buffer.BlockCopy(file, offset, segment, 0, length);
+            offset += length;
+            return segment;
+        }
+
+        var hmacSalt = ReadSegment(saltSize);
+        var derivedHmacSalt = ReadSegment(saltSize);
+        var fileSalt = ReadSegment(saltSize);
+        var fileKeySalt = ReadSegment(saltSize);
+        var encryptionKeySalt = ReadSegment(saltSize);
+        var uuid = ReadSegment(CryptoConstants.UuidSize);
+        var hashSalt = ReadSegment(saltSize);
+        var masterKeyEncryptionSalt = ReadSegment(saltSize);
+        var keyDerivationSalt = ReadSegment(saltSize);
+        var intermediateKeySalt = ReadSegment(saltSize);
+
+        // The remaining bytes are the HMAC + IV + ciphertext
+        var encryptedFile = new byte[file.Length - offset];
+        Buffer.BlockCopy(file, offset, encryptedFile, 0, encryptedFile.Length);
+
+        // For FIPS, HMAC is embedded at start of encryptedFile (inside SimpleAesHmac)
+        byte[] hmac = null; // handled inside SimpleAesHmac.Decrypt
+
+        return (hmac, hmacSalt, derivedHmacSalt, fileSalt, fileKeySalt, encryptionKeySalt,
+            uuid, hashSalt, null, masterKeyEncryptionSalt,
+            keyDerivationSalt, intermediateKeySalt, encryptedFile)!;
+    }
+
+
+
+
+    private async Task<(byte[] HmacKey, byte[] EncryptionKey, byte[] IntermediateKey)>
+        DeriveKeys(byte[] password,
+            (byte[] Hmac, byte[] HmacSalt, byte[] DerivedHmacSalt,
+                byte[] FileSalt, byte[] FileKeySalt, byte[] EncryptionKeySalt,
+                byte[] Uuid, byte[] HashSalt, byte[] MasterKeySalt, byte[] MasterKeyDerivationSalt,
+                byte[] KeyDerivationSalt, byte[] IntermediateKeySalt,
+                byte[] EncryptedFile) segments)
+    {
+        var passwordDerivedKey =
+            await HashingMethods.Argon2Id(password, segments.KeyDerivationSalt, CryptoConstants.KeySize);
+        var derivedFileKey = await HashingMethods.Argon2Id(password, segments.FileKeySalt, CryptoConstants.KeySize);
+        var derivedHmacKey = await HashingMethods.Argon2Id(password, segments.DerivedHmacSalt, CryptoConstants.KeySize);
+
+        var hmacKey = Crypto.HKDF.HkdfDerivePinned(derivedHmacKey, segments.HmacSalt, "hmac key"u8.ToArray(),
+            CryptoConstants.HmacLength);
+        var intermediateKey = Crypto.HKDF.HkdfDerivePinned(passwordDerivedKey, segments.IntermediateKeySalt,
+            "intermediate key"u8.ToArray(), CryptoConstants.KeySize);
+        var encryptionKey = Crypto.HKDF.HkdfDerivePinned(derivedFileKey, segments.EncryptionKeySalt,
+            "encryption key"u8.ToArray(), CryptoConstants.KeySize);
+
+        return (hmacKey, encryptionKey, intermediateKey);
+    }
+
+    private async Task<(byte[] HmacKey, byte[] EncryptionKey, byte[] IntermediateKey)>
+        DeriveKeysFips(byte[] password,
+            (byte[] Hmac, byte[] HmacSalt, byte[] DerivedHmacSalt,
+                byte[] FileSalt, byte[] FileKeySalt, byte[] EncryptionKeySalt,
+                byte[] Uuid, byte[] HashSalt, byte[] MasterKeySalt, byte[] MasterKeyEncryptionSalt,
+                byte[] KeyDerivationSalt, byte[] IntermediateKeySalt,
+                byte[] EncryptedFile) segments)
+    {
+        // PBKDF2-HMAC-SHA256 for FIPS compliance
+        var passwordDerivedKey =
+            Pbkdf2(password, segments.KeyDerivationSalt, CryptoConstants.KeySize);
+        var derivedFileKey =
+            Pbkdf2(password, segments.FileKeySalt, CryptoConstants.KeySize);
+        var derivedHmacKey =
+            Pbkdf2(password, segments.DerivedHmacSalt, CryptoConstants.KeySize);
+
+        // HKDF derivations (must be using FIPS-approved HMAC internally)
+        var hmacKey = Hkdf.DeriveKey(derivedHmacKey, segments.HmacSalt, "hmac key"u8.ToArray(),
+            32);
+        var intermediateKey = Hkdf.DeriveKey(passwordDerivedKey, segments.IntermediateKeySalt,
+            "intermediate key"u8.ToArray(), CryptoConstants.KeySize);
+        var encryptionKey = Hkdf.DeriveKey(derivedFileKey, segments.EncryptionKeySalt,
+            "encryption key"u8.ToArray(), CryptoConstants.KeySize);
+
+        return (hmacKey, encryptionKey, intermediateKey);
+    }
+
+
+    private void ValidateHmac(byte[] encryptedFile, byte[] hmacKey, byte[] expectedHmac)
+    {
+        var calculatedHmac = HashingMethods.HmacSha3(encryptedFile, hmacKey);
+        if (!CryptographicOperations.FixedTimeEquals(expectedHmac, calculatedHmac))
+            throw new CryptographicException("Authentication tag does not match.");
+    }
+
+    private void VerifyUuid(byte[] storedUuid, byte[] fileUuid)
+    {
+        if (!CryptographicOperations.FixedTimeEquals(storedUuid, fileUuid))
+            throw new UnauthorizedAccessException("UUID does not match.");
+    }
+
+    private async void VerifyPassword(byte[] password, byte[] storedHash, byte[] hashSalt)
+    {
+        var derivedHash = await HashingMethods.Argon2Id(password, hashSalt, CryptoConstants.HmacLength);
+        if (!CryptoUtilities.ComparePassword(derivedHash, storedHash))
+            throw new UnauthorizedAccessException("Invalid password.");
+    }
+
+    private async Task VerifyPasswordFips(byte[] password, byte[] storedHash, byte[] hashSalt)
+    {
+        // PBKDF2-HMAC-SHA512 with high iterations for compliance
+        var derivedHash = Pbkdf2(
+            password,
+            hashSalt,
+            32);
+
+        if (!CryptoUtilities.ComparePassword(derivedHash, storedHash))
+            throw new UnauthorizedAccessException("Invalid password.");
+    }
+
+    private void ValidateHmacFips(byte[] encryptedFile, byte[] hmacKey, byte[] expectedHmac)
+    {
+        // Use HMAC-SHA256 for FIPS approval
+        using var hmac = new HMACSHA256(hmacKey);
+        var calculatedHmac = hmac.ComputeHash(encryptedFile);
+
+        if (!CryptographicOperations.FixedTimeEquals(expectedHmac, calculatedHmac))
+            throw new CryptographicException("Authentication tag does not match.");
+    }
+
+    #endregion
+
+    #region UI & Error Handling
+
+    private void HandleLoginException(Exception ex)
+    {
+        ErrorLogging.ErrorLog(ex);
+        Vars.TokenSource.CancelAsync().Wait();
+        Vars.TokenSource = new CancellationTokenSource();
+
+        Vars.AttemptsRemaining--;
+        AttemptsNumberLabel.Text = Vars.AttemptsRemaining.ToString();
+
+        StatusOutputLabel.ForeColor = Color.White;
+        StatusOutputLabel.Text = "Idle...";
+        UiController.LogicMethods.EnableUi(UsernameTxt, PasswordTxt, BtnLogin, LogoutBtn);
+
+        MessageBox.Show("An error occured while logging in.", "Error", MessageBoxButtons.OK,
+            MessageBoxIcon.Error);
+    }
+
+    private void ClearPasswordBuffer()
+    {
+        PasswordTxt.Clear();
+        _passwordBuffer.Dispose();
+    }
+
+    #endregion
+
 
     /// <summary>
     ///     Handles UI and internal state recovery after a failed login attempt.
@@ -472,7 +524,7 @@ public sealed partial class PasswordVault : Form
 
         var masterKey = MasterKey.GetKey();
 
-        if (masterKey is null)
+        if (masterKey == null)
             throw new InvalidOperationException("Master key not initialized.");
 
         try
@@ -524,100 +576,80 @@ public sealed partial class PasswordVault : Form
         {
             MessageBox.Show(ex.Message, "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
             ErrorLogging.ErrorLog(ex);
+            CryptoUtilities.ClearMemoryNative(masterKey);
             HandleFailedLogin();
         }
     }
 
-    /// <summary>
-    ///     Handles UI and state recovery after a failed login attempt.
-    /// </summary>
-    /// <remarks>
-    ///     This method performs several post-failure recovery steps:
-    ///     <list type="number">
-    ///         <item>Re-enables login UI controls for retry.</item>
-    ///         <item>Updates the status label to indicate failure.</item>
-    ///         <item>Cancels the current cancellation token and prepares a new one.</item>
-    ///         <item>Displays an error message to the user.</item>
-    ///         <item>Clears the password textbox and resets the status label.</item>
-    ///         <item>Decrements the remaining login attempt counter and updates the UI.</item>
-    ///     </list>
-    ///     All sensitive data from the failed login attempt is cleared or reset appropriately.
-    /// </remarks>
+    #region Login Failure Handling
+
     private async void HandleFailedLogin()
     {
-        // Enable input and login-related UI elements
-        UiController.LogicMethods.EnableUi(UsernameTxt, PasswordTxt, BtnLogin, LogoutBtn);
+        EnableLoginUi();
+        ShowLoginFailureStatus();
+        await ResetCancellationTokenAsync();
+        PerformMemoryCleanup();
+        NotifyLoginFailure();
+        ResetLoginInputs();
+        DecrementLoginAttempts();
+    }
 
-        // Show immediate failure status
+    private void EnableLoginUi()
+    {
+        UiController.LogicMethods.EnableUi(UsernameTxt, PasswordTxt, BtnLogin, LogoutBtn);
+    }
+
+    private void ShowLoginFailureStatus()
+    {
         StatusOutputLabel.ForeColor = Color.Red;
         StatusOutputLabel.Text = "Login failed.";
+    }
 
-        // Cancel current token and prepare a new one
+    private async Task ResetCancellationTokenAsync()
+    {
         await Vars.TokenSource.CancelAsync();
         Vars.TokenSource = new CancellationTokenSource();
+    }
 
+    private void PerformMemoryCleanup()
+    {
         GC.Collect(GC.MaxGeneration, GCCollectionMode.Aggressive, true, true);
         GC.WaitForPendingFinalizers();
+    }
 
-        // Notify user
-        MessageBox.Show(
-            "Log in failed! Please recheck your login credentials and try again.",
-            "Error",
-            MessageBoxButtons.OK,
-            MessageBoxIcon.Error
-        );
+    private void NotifyLoginFailure()
+    {
+        MessageBox.Show("Log in failed! Please recheck your login credentials and try again.",
+            "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+    }
 
-        // Clear sensitive input
+    private void ResetLoginInputs()
+    {
         PasswordTxt.Clear();
-
-        // Reset status label to idle
         StatusOutputLabel.ForeColor = Color.WhiteSmoke;
         StatusOutputLabel.Text = "Idle...";
+    }
 
-        // Decrease attempts and update display
+    private void DecrementLoginAttempts()
+    {
         Vars.AttemptsRemaining--;
         AttemptsNumberLabel.Text = Vars.AttemptsRemaining.ToString();
     }
 
-    /// <summary>
-    ///     Starts the login status label animation indicating that the login process is underway.
-    /// </summary>
-    /// <remarks>
-    ///     This method asynchronously animates the <c>StatusOutputLabel</c> with the message "Logging in"
-    ///     using a cancellation token to allow interruption if the login process is canceled.
-    /// </remarks>
+    #endregion
+
+    #region Animations
+
     private async void StartAnimation()
     {
         await UiController.Animations.AnimateLabel(StatusOutputLabel, "Logging in", Vars.Token);
     }
 
-    /// <summary>
-    ///     Starts asynchronous rainbow-colored text animations on all welcome labels across different UI sections.
-    /// </summary>
-    /// <remarks>
-    ///     This method launches parallel label animations using the <see cref="UiController.Animations.RainbowLabel" /> method
-    ///     for the main welcome label and additional welcome labels in the Register, Vault, Encryption, and File Hash control
-    ///     sections.
-    ///     If any exception occurs during the animations, it is caught and logged using
-    ///     <see cref="ErrorLogging.ErrorLog(Exception)" />.
-    /// </remarks>
-    /// <exception cref="Exception">
-    ///     Any unexpected exception during label animation will be caught and logged internally.
-    /// </exception>
     private async void StartRainbowAnimation()
     {
         try
         {
-            var rainbowTasks = new[]
-            {
-                UiController.Animations.RainbowLabel(WelcomeLabel, Vars.RainbowLabelToken),
-                UiController.Animations.RainbowLabel(Vars.RegisterControls.WelcomeLabel, Vars.RainbowLabelToken),
-                UiController.Animations.RainbowLabel(Vars.VaultControls.WelcomeLabel, Vars.RainbowLabelToken),
-                UiController.Animations.RainbowLabel(Vars.EncryptionControls.WelcomeLabel, Vars.RainbowLabelToken),
-                UiController.Animations.RainbowLabel(Vars.FileHashControls.WelcomeLabel, Vars.RainbowLabelToken)
-            };
-
-            await Task.WhenAll(rainbowTasks);
+            await Task.WhenAll(GetRainbowAnimationTasks());
         }
         catch (Exception ex)
         {
@@ -625,146 +657,194 @@ public sealed partial class PasswordVault : Form
         }
     }
 
-    /// <summary>
-    ///     Handles the <c>Load</c> event for the <c>PasswordVault</c> form.
-    ///     Initializes UI visibility, cryptographic settings, and user preferences.
-    /// </summary>
-    /// <param name="sender">The source of the event, typically the form.</param>
-    /// <param name="e">An instance of <see cref="EventArgs" /> containing the event data.</param>
-    /// <remarks>
-    ///     This method performs the following initialization steps:
-    ///     <list type="number">
-    ///         <item>
-    ///             <description>Hides all welcome labels across different control sections.</description>
-    ///         </item>
-    ///         <item>
-    ///             <description>Initializes cryptographic settings using application defaults.</description>
-    ///         </item>
-    ///         <item>
-    ///             <description>Checks the stored username setting and sets the login fields accordingly.</description>
-    ///         </item>
-    ///         <item>
-    ///             <description>If no username is stored, clears the username field and disables "Remember Me."</description>
-    ///         </item>
-    ///         <item>
-    ///             <description>If a username is stored, populates it and checks the "Remember Me" checkbox.</description>
-    ///         </item>
-    ///     </list>
-    ///     All exceptions are caught and logged, and an error message is displayed to the user.
-    /// </remarks>
-    /// <exception cref="Exception">
-    ///     Any unhandled exception during initialization will be caught and logged internally.
-    /// </exception>
+    private Task[] GetRainbowAnimationTasks()
+    {
+        return new[]
+        {
+            UiController.Animations.RainbowLabel(WelcomeLabel, Vars.RainbowLabelToken),
+            UiController.Animations.RainbowLabel(Vars.RegisterControls.WelcomeLabel, Vars.RainbowLabelToken),
+            UiController.Animations.RainbowLabel(Vars.VaultControls.WelcomeLabel, Vars.RainbowLabelToken),
+            UiController.Animations.RainbowLabel(Vars.EncryptionControls.WelcomeLabel, Vars.RainbowLabelToken),
+            UiController.Animations.RainbowLabel(Vars.FileHashControls.WelcomeLabel, Vars.RainbowLabelToken),
+            UiController.Animations.RainbowLabel(Vars.CryptoSettingsControls.WelcomeLabel, Vars.RainbowLabelToken)
+        };
+    }
+
+    #endregion
+
+    #region Form Lifecycle
+
     private void PasswordVault_Load(object sender, EventArgs e)
     {
         try
         {
-            UiController.LogicMethods.DisableVisibility(WelcomeLabel, Vars.RegisterControls.WelcomeLabel,
-                Vars.VaultControls.WelcomeLabel,
-                Vars.EncryptionControls.WelcomeLabel, Vars.FileHashControls.WelcomeLabel);
-
-            // PasswordTxt.PasswordChar = '●';
-            CryptoSettings.Iterations = Settings.Default.Iterations;
-            CryptoSettings.MemSize = Settings.Default.MemorySize;
-            CryptoSettings.Parallelism = Settings.Default.Parallelism;
-
-            if (Settings.Default.userName == string.Empty)
-            {
-                UsernameTxt.Text = string.Empty;
-                RememberMeCheckBox.Checked = false;
-                return;
-            }
-
-            UsernameTxt.Text = Settings.Default.userName;
-            RememberMeCheckBox.Checked = true;
-            UsernameTxt.Select();
+            InitializeUiVisibility();
+            LoadCryptoSettings();
+            HandleFipsMode();
+            LoadUserPreferences();
         }
         catch (Exception ex)
         {
-            MessageBox.Show(ex.Message, "Error", MessageBoxButtons.OK,
-                MessageBoxIcon.Error);
+            ShowError(ex);
             ErrorLogging.ErrorLog(ex);
         }
     }
 
-    /// <summary>
-    ///     Handles the <c>Click</c> event of the <c>LogoutBtn</c> button.
-    ///     Performs logout operations including state cleanup, UI reset, and cancellation of background tasks.
-    /// </summary>
-    /// <param name="sender">The source of the event, typically the <c>LogoutBtn</c> control.</param>
-    /// <param name="e">An instance of <see cref="EventArgs" /> containing the event data.</param>
-    /// <remarks>
-    ///     This method performs the following operations:
-    ///     <list type="number">
-    ///         <item>
-    ///             <description>Verifies that a user is currently logged in.</description>
-    ///         </item>
-    ///         <item>
-    ///             <description>Clears the vault contents and resets the current user state.</description>
-    ///         </item>
-    ///         <item>
-    ///             <description>Disposes of cryptographic key material and secure memory buffers.</description>
-    ///         </item>
-    ///         <item>
-    ///             <description>Re-enables login UI elements for future login attempts.</description>
-    ///         </item>
-    ///         <item>
-    ///             <description>Cancels and resets the rainbow label animation task.</description>
-    ///         </item>
-    ///         <item>
-    ///             <description>Clears the password input field and displays a logout confirmation.</description>
-    ///         </item>
-    ///         <item>
-    ///             <description>Hides all welcome labels and resets the login status label.</description>
-    ///         </item>
-    ///     </list>
-    ///     If an error occurs during the logout process, it is caught, logged, and displayed to the user.
-    /// </remarks>
-    /// <exception cref="Exception">
-    ///     Thrown when attempting to log out without any user currently logged in.
-    /// </exception>
-    private async void LogoutBtn_Click(object sender, EventArgs e)
+    private void InitializeUiVisibility()
     {
+        UiController.LogicMethods.DisableVisibility(
+            WelcomeLabel,
+            Vars.RegisterControls.WelcomeLabel,
+            Vars.VaultControls.WelcomeLabel,
+            Vars.EncryptionControls.WelcomeLabel,
+            Vars.FileHashControls.WelcomeLabel,
+            Vars.CryptoSettingsControls.WelcomeLabel);
+    }
+
+    private void LoadCryptoSettings()
+    {
+        CryptoSettings.Iterations = Settings.Default.Iterations;
+        CryptoSettings.MemSize = Settings.Default.MemorySize;
+        CryptoSettings.Parallelism = Settings.Default.Parallelism;
+    }
+
+    private void HandleFipsMode()
+    {
+        if (!Settings.Default.FIPS) return;
+
+        MessageBox.Show("Starting in FIPS mode!", "Info", MessageBoxButtons.OK, MessageBoxIcon.Information);
+        Vars.CryptoSettingsControls.FipsModeCheckbox.Checked = true;
+        FipsEnabled = true;
+    }
+
+    private void LoadUserPreferences()
+    {
+        if (string.IsNullOrEmpty(Settings.Default.userName))
+        {
+            UsernameTxt.Text = string.Empty;
+            RememberMeCheckBox.Checked = false;
+        }
+        else
+        {
+            UsernameTxt.Text = Settings.Default.userName;
+            RememberMeCheckBox.Checked = true;
+            UsernameTxt.Select();
+        }
+    }
+
+    private void PasswordVault_FormClosing(object sender, FormClosingEventArgs e)
+    {
+        if (Encryption.FileVars.Result == null) return;
+
         try
         {
-            if (string.IsNullOrEmpty(UserFileManager.CurrentLoggedInUser))
-                throw new InvalidOperationException("No user is currently logged in.");
-
-            Vars.VaultControls.PassVault.Rows.Clear();
-            Vars.VaultControls.SaveVaultBtn.Enabled = true;
-            UserFileManager.CurrentLoggedInUser = string.Empty;
-            MasterKey.Dispose();
-            _passwordBuffer.Dispose();
-            UiController.LogicMethods.EnableUi(BtnLogin, UsernameTxt, PasswordTxt, RememberMeCheckBox);
-
-            if (Vars.RainbowTokenSource != null)
-            {
-                await Vars.RainbowTokenSource.CancelAsync();
-                Vars.RainbowTokenSource.Dispose();
-                Vars.RainbowTokenSource = new CancellationTokenSource();
-            }
-
-            PasswordTxt.Clear();
-
-            MessageBox.Show("User successfully logged out.", "Success", MessageBoxButtons.OK,
-                MessageBoxIcon.Information);
-
-            Application.Exit();
+            Encryption.FileVars.Result.Dispose();
+            Encryption.FileVars.Result = null;
         }
         catch (Exception ex)
         {
-            MessageBox.Show(ex.Message, "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
             ErrorLogging.ErrorLog(ex);
         }
     }
 
     #endregion
 
+    #region Logout
+
+    private async void LogoutBtn_Click(object sender, EventArgs e)
+    {
+        try
+        {
+            EnsureUserIsLoggedIn();
+            ClearVaultData();
+            DisposeSensitiveData();
+            EnableLoginControls();
+            HideWelcomeLabels();
+            await ResetRainbowAnimationAsync();
+            ClearPasswordInput();
+            ShowLogoutSuccess();
+        }
+        catch (Exception ex)
+        {
+            ShowError(ex);
+            ErrorLogging.ErrorLog(ex);
+        }
+    }
+
+    private void EnsureUserIsLoggedIn()
+    {
+        if (string.IsNullOrEmpty(UserFileManager.CurrentLoggedInUser))
+            throw new InvalidOperationException("No user is currently logged in.");
+    }
+
+    private void ClearVaultData()
+    {
+        Vars.VaultControls.PassVault.Rows.Clear();
+        Vars.VaultControls.SaveVaultBtn.Enabled = true;
+        UserFileManager.CurrentLoggedInUser = string.Empty;
+    }
+
+    private void DisposeSensitiveData()
+    {
+        MasterKey.Dispose();
+        MasterKey.Reset();
+        _passwordBuffer.Dispose();
+    }
+
+    private void EnableLoginControls()
+    {
+        UiController.LogicMethods.EnableUi(BtnLogin, UsernameTxt, PasswordTxt, RememberMeCheckBox);
+    }
+
+    private void HideWelcomeLabels()
+    {
+        UiController.LogicMethods.DisableVisibility(
+            WelcomeLabel,
+            Vars.RegisterControls.WelcomeLabel,
+            Vars.VaultControls.WelcomeLabel,
+            Vars.EncryptionControls.WelcomeLabel,
+            Vars.FileHashControls.WelcomeLabel,
+            Vars.CryptoSettingsControls.WelcomeLabel);
+    }
+
+    private async Task ResetRainbowAnimationAsync()
+    {
+        if (Vars.RainbowTokenSource == null) return;
+
+        await Vars.RainbowTokenSource.CancelAsync();
+        Vars.RainbowTokenSource.Dispose();
+        Vars.RainbowTokenSource = new CancellationTokenSource();
+    }
+
+    private void ClearPasswordInput()
+    {
+        PasswordTxt.Clear();
+    }
+
+    private void ShowLogoutSuccess()
+    {
+        MessageBox.Show("User successfully logged out.", "Success", MessageBoxButtons.OK, MessageBoxIcon.Information);
+    }
+
+    #endregion
+
+    #region Common
+
+    private void ShowError(Exception ex)
+    {
+        MessageBox.Show(ex.Message, "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+    }
+
+    #endregion
+
+    #endregion
+
     #region WindowAnimations
 
-    [LibraryImport("user32.dll")]
-    [return: MarshalAs(UnmanagedType.Bool)]
-    private static partial bool AnimateWindow(IntPtr hWnd, int dwTime, AnimateWindowFlags flags);
+    [DllImport("user32.dll", SetLastError = true)]
+    [return: System.Runtime.InteropServices.MarshalAs(UnmanagedType.Bool)]
+    private static extern bool AnimateWindow(IntPtr hWnd, int dwTime, AnimateWindowFlags flags);
+
 
     [Flags]
     public enum AnimateWindowFlags
@@ -826,8 +906,8 @@ public sealed partial class PasswordVault : Form
         Vars.FileHashControls.Visible = false;
         Vars.EncryptionControls.Visible = false;
         Vars.CryptoSettingsControls.Visible = false;
-        Size = Size with { Height = 510 };
-        Size = Size with { Width = 885 };
+        Size = Size with { Height = 530 };
+        Size = Size with { Width = 895 };
         Vars.VaultControls.Location = new Point(200, 55);
         Vars.VaultControls.Visible = true;
         Controls.Add(Vars.VaultControls);
@@ -851,8 +931,8 @@ public sealed partial class PasswordVault : Form
 
     private void RegisterBtn_Click(object sender, EventArgs e)
     {
-        Size = Size with { Height = 504 };
-        Size = Size with { Width = 685 };
+        Size = Size with { Height = 530 };
+        Size = Size with { Width = 696 };
         Vars.RegisterControls.Location = new Point(210, 45);
         SidePanelMarker.Height = RegisterBtn.Height;
         SidePanelMarker.Top = RegisterBtn.Top;
@@ -869,7 +949,6 @@ public sealed partial class PasswordVault : Form
 
     private void EncryptionBtn_Click(object sender, EventArgs e)
     {
-        // 973, 289
         Size = Size with { Height = 375 };
         Size = Size with { Width = 1200 };
         LoginGroupBox.Visible = false;
@@ -886,8 +965,8 @@ public sealed partial class PasswordVault : Form
 
     private void FileHashBtn_Click(object sender, EventArgs e)
     {
-        Size = Size with { Height = 438 };
-        Size = Size with { Width = 1160 };
+        Size = Size with { Height = 490 };
+        Size = Size with { Width = 1185 };
         SidePanelMarker.Height = FileHashBtn.Height;
         SidePanelMarker.Top = FileHashBtn.Top;
         LoginGroupBox.Visible = false;
@@ -902,8 +981,8 @@ public sealed partial class PasswordVault : Form
 
     private void CryptoSettingsBtn_Click(object sender, EventArgs e)
     {
-        Size = Size with { Height = 500 };
-        Size = Size with { Width = 675 };
+        Size = Size with { Height = 450 };
+        Size = Size with { Width = 685 };
         SidePanelMarker.Height = CryptoSettingsBtn.Height;
         SidePanelMarker.Top = CryptoSettingsBtn.Top;
         LoginGroupBox.Visible = false;
@@ -1006,6 +1085,6 @@ public sealed partial class PasswordVault : Form
         PasswordTxt.Text = new string('●', _passwordBuffer.Length);
         PasswordTxt.SelectionStart = PasswordTxt.Text.Length; // Move caret to end
     }
-}
 
-#endregion TextboxBehavior
+    #endregion TextboxBehavior
+}

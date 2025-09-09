@@ -88,7 +88,7 @@ public static class UiController
     }
 
     internal static class LogicMethods
-        {
+    {
         /// <summary>
         /// Enables the specified UI controls by setting their <see cref="Control.Enabled"/> property to <c>true</c>.
         /// </summary>
@@ -135,6 +135,36 @@ public static class UiController
         public static void DisableVisibility(params Control[] c)
         {
             foreach (var control in c) control.Visible = false;
+        }
+    }
+
+    internal static class UIThreadHelper
+    {
+        /// <summary>
+        /// Safely executes an action on the UI thread if required.
+        /// </summary>
+        /// <param name="control">The control to use for UI thread check.</param>
+        /// <param name="action">The action to perform on the UI thread.</param>
+        public static void SafeInvoke(Control control, Action action)
+        {
+            if (control == null || control.IsDisposed || action == null)
+                return;
+
+            if (control.InvokeRequired)
+            {
+                try
+                {
+                    control.Invoke(action);
+                }
+                catch (ObjectDisposedException)
+                {
+                    throw;
+                }
+            }
+            else
+            {
+                action();
+            }
         }
     }
 }

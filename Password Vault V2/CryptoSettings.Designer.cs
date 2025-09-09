@@ -28,50 +28,27 @@
         /// </summary>
         private void InitializeComponent()
         {
-            System.ComponentModel.ComponentResourceManager resources = new System.ComponentModel.ComponentResourceManager(typeof(CryptoSettings));
-            statusLbl = new Label();
-            outputLbl = new Label();
             WelcomeLabel = new Label();
             CryptoBox = new GroupBox();
+            FipsModeCheckbox = new CheckBox();
             MemoryAmountLbl = new Label();
             MemorySizeNumberBox = new NumericUpDown();
             ParallelismLbl = new Label();
             ParallelismNumberBox = new NumericUpDown();
             IterationsLbl = new Label();
             IterationsNumberBox = new NumericUpDown();
-            SaveBtn = new Button();
             CryptoBox.SuspendLayout();
             ((System.ComponentModel.ISupportInitialize)MemorySizeNumberBox).BeginInit();
             ((System.ComponentModel.ISupportInitialize)ParallelismNumberBox).BeginInit();
             ((System.ComponentModel.ISupportInitialize)IterationsNumberBox).BeginInit();
             SuspendLayout();
             // 
-            // statusLbl
-            // 
-            statusLbl.AutoSize = true;
-            statusLbl.Font = new Font("Century Gothic", 11F);
-            statusLbl.Location = new Point(6, 397);
-            statusLbl.Name = "statusLbl";
-            statusLbl.Size = new Size(94, 25);
-            statusLbl.TabIndex = 8;
-            statusLbl.Text = "Status ::";
-            // 
-            // outputLbl
-            // 
-            outputLbl.AutoSize = true;
-            outputLbl.Font = new Font("Century Gothic", 11F);
-            outputLbl.Location = new Point(104, 397);
-            outputLbl.Name = "outputLbl";
-            outputLbl.Size = new Size(71, 25);
-            outputLbl.TabIndex = 9;
-            outputLbl.Text = "Idle...";
-            // 
             // WelcomeLabel
             // 
             WelcomeLabel.AutoSize = true;
             WelcomeLabel.Font = new Font("Century Gothic", 11F);
             WelcomeLabel.ForeColor = Color.White;
-            WelcomeLabel.Location = new Point(6, 372);
+            WelcomeLabel.Location = new Point(6, 301);
             WelcomeLabel.Name = "WelcomeLabel";
             WelcomeLabel.Size = new Size(169, 25);
             WelcomeLabel.TabIndex = 12;
@@ -80,24 +57,34 @@
             // CryptoBox
             // 
             CryptoBox.BackColor = Color.FromArgb(30, 30, 30);
+            CryptoBox.Controls.Add(FipsModeCheckbox);
             CryptoBox.Controls.Add(MemoryAmountLbl);
             CryptoBox.Controls.Add(MemorySizeNumberBox);
             CryptoBox.Controls.Add(ParallelismLbl);
             CryptoBox.Controls.Add(ParallelismNumberBox);
             CryptoBox.Controls.Add(IterationsLbl);
             CryptoBox.Controls.Add(IterationsNumberBox);
-            CryptoBox.Controls.Add(SaveBtn);
             CryptoBox.Controls.Add(WelcomeLabel);
-            CryptoBox.Controls.Add(outputLbl);
-            CryptoBox.Controls.Add(statusLbl);
             CryptoBox.Font = new Font("Century Gothic", 11F, FontStyle.Regular, GraphicsUnit.Point, 0);
             CryptoBox.ForeColor = Color.WhiteSmoke;
-            CryptoBox.Location = new Point(13, 3);
+            CryptoBox.Location = new Point(15, 28);
             CryptoBox.Name = "CryptoBox";
-            CryptoBox.Size = new Size(446, 436);
+            CryptoBox.Size = new Size(446, 344);
             CryptoBox.TabIndex = 1;
             CryptoBox.TabStop = false;
             CryptoBox.Text = "Cryptography Settings";
+            // 
+            // FipsModeCheckbox
+            // 
+            FipsModeCheckbox.AutoSize = true;
+            FipsModeCheckbox.Location = new Point(289, 297);
+            FipsModeCheckbox.Name = "FipsModeCheckbox";
+            FipsModeCheckbox.Size = new Size(151, 29);
+            FipsModeCheckbox.TabIndex = 20;
+            FipsModeCheckbox.Text = "FIPS Mode";
+            FipsModeCheckbox.UseVisualStyleBackColor = true;
+            FipsModeCheckbox.CheckedChanged += FipsModeCheckbox_CheckedChanged;
+            FipsModeCheckbox.MouseHover += FipsModeCheckbox_MouseHover;
             // 
             // MemoryAmountLbl
             // 
@@ -169,32 +156,16 @@
             IterationsNumberBox.Value = new decimal(new int[] { 1, 0, 0, 0 });
             IterationsNumberBox.ValueChanged += IterationsNumberBox_ValueChanged;
             // 
-            // SaveBtn
-            // 
-            SaveBtn.BackColor = Color.FromArgb(30, 30, 30);
-            SaveBtn.FlatAppearance.BorderColor = Color.WhiteSmoke;
-            SaveBtn.FlatStyle = FlatStyle.Flat;
-            SaveBtn.Font = new Font("Century Gothic", 11F);
-            SaveBtn.ForeColor = Color.WhiteSmoke;
-            SaveBtn.Image = (Image)resources.GetObject("SaveBtn.Image");
-            SaveBtn.ImageAlign = ContentAlignment.MiddleLeft;
-            SaveBtn.Location = new Point(6, 238);
-            SaveBtn.Name = "SaveBtn";
-            SaveBtn.Size = new Size(434, 44);
-            SaveBtn.TabIndex = 13;
-            SaveBtn.Text = "&Save Settings";
-            SaveBtn.UseVisualStyleBackColor = false;
-            SaveBtn.Click += SaveBtn_Click;
-            // 
             // CryptoSettings
             // 
-            AutoScaleDimensions = new SizeF(10F, 25F);
-            AutoScaleMode = AutoScaleMode.Font;
+            AutoScaleDimensions = new SizeF(144F, 144F);
+            AutoScaleMode = AutoScaleMode.Dpi;
             BackColor = Color.FromArgb(30, 30, 30);
             Controls.Add(CryptoBox);
             Name = "CryptoSettings";
-            Size = new Size(470, 449);
+            Size = new Size(479, 399);
             Load += CryptoSettings_Load;
+            Paint += CryptoSettings_Paint;
             CryptoBox.ResumeLayout(false);
             CryptoBox.PerformLayout();
             ((System.ComponentModel.ISupportInitialize)MemorySizeNumberBox).EndInit();
@@ -204,17 +175,14 @@
         }
 
         #endregion
-
-        private Label statusLbl;
-        private Label outputLbl;
         public Label WelcomeLabel;
         private GroupBox CryptoBox;
-        public Button SaveBtn;
         private Label IterationsLbl;
         private Label ParallelismLbl;
         private Label MemoryAmountLbl;
         private NumericUpDown IterationsNumberBox;
         private NumericUpDown ParallelismNumberBox;
         private NumericUpDown MemorySizeNumberBox;
+        internal CheckBox FipsModeCheckbox;
     }
 }

@@ -6,9 +6,47 @@ namespace Password_Vault_V2;
 // This class just causes problems during encryption and decryption. it is currently disabled.
 public static class AntiTamper
 {
+    private static volatile bool _enabled = true;
+    public static void Disable() => _enabled = false;
+    public static void Enable() => _enabled = true;
+    public static bool IsEnabled => _enabled;
+    private static CancellationTokenSource? _cts;
+
+    public static void StartAntiTamperMonitoring()
+    {
+        _cts = new CancellationTokenSource();
+
+        Task.Run(async () =>
+        {
+            while (!_cts.Token.IsCancellationRequested)
+            {
+                bool triggered = await AntiTamper.PerformChecks();
+                if (triggered)
+                {
+                    MessageBox.Show("Application tamper detected. The application will now close.", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                    Application.Exit();
+                }
+
+                await Task.Delay(1000, _cts.Token); // Run every 1 second
+            }
+        }, _cts.Token);
+    }
+
+    public static void StopAntiTamperMonitoring()
+    {
+        if (_cts != null)
+        {
+            _cts.Cancel();
+            _cts.Dispose();
+            _cts = null;
+        }
+    }
 #pragma warning disable
     public static async Task<bool> PerformChecks()
     {
+        if (!_enabled)
+            return false;
+
         return await Task.Run(() =>
         {
             if (CheckDebuggerManagedPresent())

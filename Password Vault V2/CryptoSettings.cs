@@ -1,4 +1,6 @@
-﻿namespace Password_Vault_V2;
+﻿using System.Drawing.Drawing2D;
+
+namespace Password_Vault_V2;
 
 public partial class CryptoSettings : UserControl
 {
@@ -31,74 +33,14 @@ public partial class CryptoSettings : UserControl
     /// </summary>
     private static readonly ToolTip Tip = new()
     {
-        AutoPopDelay = 5000,
-        InitialDelay = 1000,
+        AutoPopDelay = 0,
+        InitialDelay = 0,
         ToolTipIcon = ToolTipIcon.Info,
         Active = true,
         AutomaticDelay = 1000,
         IsBalloon = true,
+        ShowAlways = true
     };
-
-
-    /// <summary>
-    /// A cancellation token source used to cancel asynchronous operations.
-    /// </summary>
-    private CancellationTokenSource _tokenSource = new();
-
-    /// <summary>
-    /// Gets the current cancellation token for ongoing async operations.
-    /// </summary>
-    private CancellationToken Token => _tokenSource.Token;
-
-    /// <summary>
-    /// Handles the click event for the Save button.
-    /// Saves the cryptographic settings and updates the UI accordingly.
-    /// </summary>
-    /// <param name="sender">The source of the event.</param>
-    /// <param name="e">The event data.</param>
-    private async void SaveBtn_Click(object sender, EventArgs e)
-    {
-        try
-        {
-            MessageBox.Show("Saving settings...", "Saving", MessageBoxButtons.OK, MessageBoxIcon.Information);
-            outputLbl.Text = "Saving settings";
-            AnimateLabel();
-            Iterations = (int)IterationsNumberBox.Value;
-            MemSize = (double)MemorySizeNumberBox.Value * MemConstant / Math.Pow(1024, 2);
-            Parallelism = (int)ParallelismNumberBox.Value;
-            Settings.Default.Iterations = Iterations;
-            Settings.Default.MemorySize = MemSize;
-            Settings.Default.Parallelism = Parallelism;
-            Settings.Default.Save();
-
-            await Task.Delay(3000, Token).ConfigureAwait(false);
-            await _tokenSource.CancelAsync().ConfigureAwait(false);
-
-            if (_tokenSource.IsCancellationRequested)
-                _tokenSource = new CancellationTokenSource();
-            outputLbl.ForeColor = Color.LimeGreen;
-            outputLbl.Text = @"Saved Successfully";
-            MessageBox.Show("Settings saved successfully.", "Success", MessageBoxButtons.OK,
-                MessageBoxIcon.Information);
-            outputLbl.ForeColor = Color.WhiteSmoke;
-            outputLbl.Text = @"Idle...";
-        }
-        catch (Exception ex)
-        {
-            MessageBox.Show(ex.Message, "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
-            ErrorLogging.ErrorLog(ex);
-            outputLbl.ForeColor = Color.WhiteSmoke;
-            outputLbl.Text = @"Idle...";
-        }
-    }
-
-    /// <summary>
-    /// Animates the output label with a "Saving Settings" message.
-    /// </summary>
-    private async void AnimateLabel()
-    {
-        await UiController.Animations.AnimateLabel(outputLbl, "Saving Settings", Token).ConfigureAwait(false);
-    }
 
     /// <summary>
     /// Handles the load event of the CryptoSettings form.
@@ -125,8 +67,6 @@ public partial class CryptoSettings : UserControl
             ParallelismNumberBox.Value = Settings.Default.Parallelism;
         else
             ParallelismNumberBox.Value = ParallelismNumberBox.Minimum;
-
-        MessageBox.Show("Make sure you save your settings, they won't apply unless you save them.", "Info", MessageBoxButtons.OK, MessageBoxIcon.Information);
     }
 
     /// <summary>
@@ -137,8 +77,13 @@ public partial class CryptoSettings : UserControl
     /// <param name="e">The event data.</param>
     private void IterationsNumberBox_ValueChanged(object sender, EventArgs e)
     {
-        Tip.SetToolTip(IterationsNumberBox, "A higher iteration count will create a more secure hash with the tradeoff of having more of a " +
-            "strain on your CPU.");
+        Iterations = (int)IterationsNumberBox.Value;
+        MemSize = (double)MemorySizeNumberBox.Value * MemConstant / Math.Pow(1024, 2);
+        Parallelism = (int)ParallelismNumberBox.Value;
+        Settings.Default.Iterations = Iterations;
+        Settings.Default.MemorySize = MemSize;
+        Settings.Default.Parallelism = Parallelism;
+        Settings.Default.Save();
     }
 
     /// <summary>
@@ -149,8 +94,13 @@ public partial class CryptoSettings : UserControl
     /// <param name="e">The event data.</param>
     private void ParallelismNumberBox_ValueChanged(object sender, EventArgs e)
     {
-        Tip.SetToolTip(ParallelismNumberBox, "This value should be the amount of cores your CPU has multiplied by 2. For example, if your" +
-            " CPU had 12 cores, multiply that by 2 to get 24. Therefore this value should be 24. This value is dependent on your CPU.");
+        Iterations = (int)IterationsNumberBox.Value;
+        MemSize = (double)MemorySizeNumberBox.Value * MemConstant / Math.Pow(1024, 2);
+        Parallelism = (int)ParallelismNumberBox.Value;
+        Settings.Default.Iterations = Iterations;
+        Settings.Default.MemorySize = MemSize;
+        Settings.Default.Parallelism = Parallelism;
+        Settings.Default.Save();
     }
 
     /// <summary>
@@ -161,8 +111,49 @@ public partial class CryptoSettings : UserControl
     /// <param name="e">The event data.</param>
     private void MemorySizeNumberBox_ValueChanged(object sender, EventArgs e)
     {
-        Tip.SetToolTip(MemorySizeNumberBox, "A higher memory amount will create a stronger hash at the expense of putting a strain on " +
-            "your PC. Do not exceed the max amount of RAM that your system has. For example, if you have 16GB of RAM, this value should be" +
-            " 12GB or less.");
+        Iterations = (int)IterationsNumberBox.Value;
+        MemSize = (double)MemorySizeNumberBox.Value * MemConstant / Math.Pow(1024, 2);
+        Parallelism = (int)ParallelismNumberBox.Value;
+        Settings.Default.Iterations = Iterations;
+        Settings.Default.MemorySize = MemSize;
+        Settings.Default.Parallelism = Parallelism;
+        Settings.Default.Save();
+    }
+
+    private void FipsModeCheckbox_MouseHover(object sender, EventArgs e)
+    {
+        Tip.SetToolTip(FipsModeCheckbox, "Enable FIPS certified algorithms.");
+    }
+
+    private void FipsModeCheckbox_CheckedChanged(object sender, EventArgs e)
+    {
+        if (FipsModeCheckbox.Checked)
+        {
+            Settings.Default.FIPS = true;
+            Settings.Default.Save();
+            IterationsNumberBox.Minimum = 10000;
+            IterationsNumberBox.Maximum = 2000000;
+            IterationsNumberBox.Increment = 10000;
+            IterationsNumberBox.Value = 10000;
+            MemorySizeNumberBox.Enabled = false;
+            ParallelismNumberBox.Enabled = false;
+        }
+        else
+        {
+            Settings.Default.FIPS = false;
+            Settings.Default.Save();
+            IterationsNumberBox.Minimum = 1;
+            IterationsNumberBox.Maximum = 100;
+            IterationsNumberBox.Increment = 1;
+            IterationsNumberBox.Value = 1;
+            MemorySizeNumberBox.Enabled = true;
+            ParallelismNumberBox.Enabled = true;
+        }
+    }
+
+    private void CryptoSettings_Paint(object sender, PaintEventArgs e)
+    {
+        e.Graphics.Clear(this.BackColor);  // Clear previous drawings
+        e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
     }
 }

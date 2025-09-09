@@ -1,7 +1,11 @@
-﻿using System.IO.Compression;
+﻿using System.Collections.Concurrent;
+using System.ComponentModel;
+using System.IO.Compression;
 using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text;
+using System.Threading.Channels;
+using System.Threading.Tasks.Dataflow;
 using Konscious.Security.Cryptography;
 using Org.BouncyCastle.Crypto;
 using Org.BouncyCastle.Crypto.Digests;
@@ -15,7 +19,7 @@ using Sodium;
 
 namespace Password_Vault_V2;
 
-public abstract class Crypto
+internal abstract class Crypto
 {
     /// <summary>
     ///     Compresses and encrypts the provided input data using the specified key and HKDF-derived salt.
@@ -162,6 +166,31 @@ public abstract class Crypto
         return outputStream.ToArray();
     }
 
+    private static async Task CompressText(Stream inputStream, Stream outputStream)
+    {
+        if (inputStream == null)
+            throw new ArgumentNullException(nameof(inputStream), "Input stream cannot be null.");
+        if (outputStream == null)
+            throw new ArgumentNullException(nameof(outputStream), "Output stream cannot be null.");
+
+        await using var gzipStream = new GZipStream(outputStream, CompressionLevel.SmallestSize, true);
+        await inputStream.CopyToAsync(gzipStream).ConfigureAwait(false);
+        await gzipStream.FlushAsync().ConfigureAwait(false);
+    }
+
+    private static async Task DecompressText(Stream compressedStream, Stream outputStream)
+    {
+        if (compressedStream == null)
+            throw new ArgumentNullException(nameof(compressedStream), "Compressed stream cannot be null.");
+        if (outputStream == null)
+            throw new ArgumentNullException(nameof(outputStream), "Output stream cannot be null.");
+
+        await using var gzipStream = new GZipStream(compressedStream, CompressionMode.Decompress, true);
+        await gzipStream.CopyToAsync(outputStream).ConfigureAwait(false);
+        await gzipStream.FlushAsync().ConfigureAwait(false);
+    }
+
+
     /// <summary>
     ///     Derives a cryptographic key from the specified parameters using HKDF and pins the resulting buffer in memory.
     /// </summary>
@@ -170,62 +199,52 @@ public abstract class Crypto
     /// <param name="label">A context-specific label (info) for key derivation.</param>
     /// <param name="length">The desired length of the derived key.</param>
     /// <returns>A derived key byte array.</returns>
-    private static byte[] DeriveAndPin(byte[] key, byte[] salt, byte[] label, int length)
+    public static byte[] DeriveAndPin(byte[] key, byte[] salt, byte[] label, int length)
     {
         return HKDF.HkdfDerivePinned(key, salt, label, length);
     }
 
-    /// <summary>
-    ///     Represents cryptographic parameters associated with a specific user, including salts, keys, and identifiers used
-    ///     for secure encryption and authentication.
-    /// </summary>
-    public abstract class UserCryptoParameters
+    private static async Task<int> ReadExactAsync(Stream stream, byte[] buffer, int count)
     {
-        /// <summary>
-        ///     Gets or sets the salt used when hashing the user's password.
-        /// </summary>
-        public static byte[]? HashSalt { get; set; }
+        var totalRead = 0;
+        while (totalRead < count)
+        {
+            var read = await stream.ReadAsync(buffer, totalRead, count - totalRead).ConfigureAwait(false);
+            if (read == 0) break; // End of stream
+            totalRead += read;
+        }
 
-        /// <summary>
-        ///     Gets or sets the universally unique identifier (UUID) associated with the user.
-        /// </summary>
-        public static byte[]? UUID { get; set; }
+        return totalRead;
+    }
 
-        /// <summary>
-        ///     Gets or sets the salt used for HKDF (HMAC-based Key Derivation Function) operations.
-        /// </summary>
-        public static byte[]? HkdfSalt { get; set; }
+    private static async Task<byte[]> ReadExactAsync(Stream stream, int count)
+    {
+        var buffer = new byte[count];
+        var offset = 0;
 
-        /// <summary>
-        ///     Gets or sets the salt used during key derivation for encryption keys.
-        /// </summary>
-        public static byte[]? KeyDerivationSalt { get; set; }
+        while (offset < count)
+        {
+            var bytesRead = await stream.ReadAsync(buffer, offset, count - offset);
+            if (bytesRead == 0) throw new EndOfStreamException($"Expected {count} bytes, got {offset}.");
+            offset += bytesRead;
+        }
 
-        /// <summary>
-        ///     Gets or sets the salt used to derive an intermediate encryption key, often used as a step between password and
-        ///     master key.
-        /// </summary>
-        public static byte[]? IntermediateKeySalt { get; set; }
+        return buffer;
+    }
 
-        /// <summary>
-        ///     Gets or sets the salt used when deriving the final master key.
-        /// </summary>
-        public static byte[]? MasterKeySalt { get; set; }
-
-        /// <summary>
-        ///     Gets or sets the securely hashed password value.
-        /// </summary>
-        public static byte[]? PasswordHash { get; set; }
-
-        /// <summary>
-        ///     Gets or sets the encrypted version of the master key.
-        /// </summary>
-        public static byte[]? EncryptedMasterKey { get; set; }
-
-        /// <summary>
-        ///     Gets or sets the salt used for encrypting and authenticating the user's metadata or associated file contents.
-        /// </summary>
-        public static byte[]? UserFileSalt { get; set; }
+    public static IProgress<long> CreateSegmentedProgress(
+        long layerLength,
+        double segmentStartPercent,
+        double segmentEndPercent,
+        IProgress<double> overallProgress)
+    {
+        return new Progress<long>(bytesSoFar =>
+        {
+            var fraction = bytesSoFar / (double)layerLength;
+            var percent = segmentStartPercent + (segmentEndPercent - segmentStartPercent) * fraction;
+            percent = Math.Clamp(percent, segmentStartPercent, segmentEndPercent);
+            overallProgress.Report(percent);
+        });
     }
 
     /// <summary>
@@ -258,10 +277,7 @@ public abstract class Crypto
         public static readonly RandomNumberGenerator RndNum = RandomNumberGenerator.Create();
 
         // File signature as a byte array (ASCII encoded)
-        public static readonly byte[] FileSignature = [(byte)'v', (byte)'1', (byte)'.', (byte)'0'];
-
-        // Alternatively, using C# 11 UTF8 literal syntax (requires .NET 7+)
-        // public static readonly byte[] FileSignature = "v1.0"u8.ToArray();
+        public static readonly byte[] FileSignature = "v1.0"u8.ToArray();
     }
 
     internal static class MasterKey
@@ -285,13 +301,20 @@ public abstract class Crypto
             if (_isDisposed)
                 throw new ObjectDisposedException(nameof(MasterKey), "Cannot reuse disposed MasterKey.");
 
-            // Copy key bytes to avoid exposing the original array
             _keyBytes = new byte[masterKey.Length];
             Buffer.BlockCopy(masterKey, 0, _keyBytes, 0, masterKey.Length);
 
-            // Pin the copied byte array
+            // Immediately zero original array
+            CryptoUtilities.ClearMemoryNative(masterKey);
+
             _pinnedHandle = GCHandle.Alloc(_keyBytes, GCHandleType.Pinned);
+
+            // Lock in memory to prevent paging
+            if (!NativeMethods.VirtualLock(_pinnedHandle.Value.AddrOfPinnedObject(),
+                    (UIntPtr)_keyBytes.Length))
+                throw new Win32Exception(Marshal.GetLastWin32Error(), "Failed to lock memory with VirtualLock");
         }
+
 
         /// <summary>
         ///     Gets the pinned master key bytes.
@@ -321,13 +344,50 @@ public abstract class Crypto
                     CryptoUtilities.ClearMemoryNative(_keyBytes);
 
                     if (_pinnedHandle is { IsAllocated: true })
+                    {
                         _pinnedHandle.Value.Free();
+                        NativeMethods.VirtualUnlock(_pinnedHandle.Value.AddrOfPinnedObject(),
+                            (UIntPtr)_keyBytes.Length);
+                    }
 
                     _keyBytes = null;
                 }
 
                 _isDisposed = true;
             }
+        }
+
+        /// <summary>
+        ///     Resets the static MasterKey so it can be re-used after logout.
+        /// </summary>
+        public static void Reset()
+        {
+            if (_keyBytes != null)
+            {
+                CryptoUtilities.ClearMemoryNative(_keyBytes);
+
+                if (_pinnedHandle is { IsAllocated: true })
+                {
+                    _pinnedHandle.Value.Free();
+                    NativeMethods.VirtualUnlock(_pinnedHandle.Value.AddrOfPinnedObject(),
+                        (UIntPtr)_keyBytes.Length);
+                }
+
+                _keyBytes = null;
+            }
+
+            _isDisposed = false;
+        }
+
+        private static class NativeMethods
+        {
+            [DllImport("kernel32.dll", SetLastError = true)]
+            [return: MarshalAs(UnmanagedType.Bool)]
+            internal static extern bool VirtualLock(IntPtr lpAddress, UIntPtr dwSize);
+
+            [DllImport("kernel32.dll", SetLastError = true)]
+            [return: MarshalAs(UnmanagedType.Bool)]
+            internal static extern bool VirtualUnlock(IntPtr lpAddress, UIntPtr dwSize);
         }
     }
 
@@ -692,6 +752,43 @@ public abstract class Crypto
             return buffer;
         }
 
+        public static async Task<byte[]> ReadTrailingTagAsync(Stream stream, int tagLength)
+        {
+            if (!stream.CanSeek)
+                throw new InvalidOperationException("Stream must support seeking to read trailing tag.");
+
+            if (tagLength <= 0 || stream.Length < tagLength)
+                throw new ArgumentOutOfRangeException(nameof(tagLength), "Invalid tag length or stream too short.");
+
+            var tag = new byte[tagLength];
+
+            stream.Seek(-tagLength, SeekOrigin.End);
+            var bytesRead = await stream.ReadAsync(tag, 0, tagLength).ConfigureAwait(false);
+
+            if (bytesRead != tagLength)
+                throw new IOException($"Expected to read {tagLength} bytes for tag, got {bytesRead}.");
+
+            stream.Seek(0, SeekOrigin.Begin); // Reset stream position if caller wants to re-read content
+            return tag;
+        }
+
+        public static async Task<byte[]> ReadExactAsync(Stream stream, int count)
+        {
+            var buffer = new byte[count];
+            var offset = 0;
+
+            while (offset < count)
+            {
+                var read = await stream.ReadAsync(buffer, offset, count - offset).ConfigureAwait(false);
+                if (read == 0)
+                    throw new EndOfStreamException($"Expected {count} bytes but reached end of stream at {offset}.");
+                offset += read;
+            }
+
+            return buffer;
+        }
+
+
         /// <summary>
         ///     Compares two password hashes in a secure manner using fixed-time comparison.
         /// </summary>
@@ -743,6 +840,30 @@ public abstract class Crypto
                 {
                     if (handle.IsAllocated)
                         handle.Free();
+                }
+            }
+        }
+
+        public static void ClearCharArray(params char[][] arrays)
+        {
+            if (arrays == null || arrays.Length == 0)
+                throw new ArgumentNullException(nameof(arrays), "Input array was null or empty.");
+
+            foreach (var charArray in arrays)
+            {
+                if (charArray == null)
+                    continue;
+
+                var handle = GCHandle.Alloc(charArray, GCHandleType.Pinned);
+                try
+                {
+                    var byteSpan = MemoryMarshal.AsBytes<char>(charArray);
+
+                    CryptographicOperations.ZeroMemory(byteSpan);
+                }
+                finally
+                {
+                    handle.Free();
                 }
             }
         }
@@ -867,7 +988,7 @@ public abstract class Crypto
     }
 
     /// <summary>
-    /// Represents a set of cryptographic buffers that are pinned in memory for secure use and disposal.
+    ///     Represents a set of cryptographic buffers that are pinned in memory for secure use and disposal.
     /// </summary>
     private sealed class DisposableBufferSet : IDisposable
     {
@@ -904,12 +1025,12 @@ public abstract class Crypto
         public byte[] HMacKey3 => this["HMacKey3"];
 
         /// <summary>
-        /// Gets all buffers stored in this set as an array of byte arrays.
+        ///     Gets all buffers stored in this set as an array of byte arrays.
         /// </summary>
         public byte[][] BuffersToClear => _buffers.Values.Select(v => v.buffer).ToArray();
 
         /// <summary>
-        /// Disposes the buffer set by securely clearing and freeing all pinned memory.
+        ///     Disposes the buffer set by securely clearing and freeing all pinned memory.
         /// </summary>
         public void Dispose()
         {
@@ -927,7 +1048,7 @@ public abstract class Crypto
         }
 
         /// <summary>
-        /// Adds a derived buffer to the buffer set and pins it in memory.
+        ///     Adds a derived buffer to the buffer set and pins it in memory.
         /// </summary>
         /// <param name="name">The key name used to identify the buffer.</param>
         /// <param name="buffer">The derived byte array buffer.</param>
@@ -980,15 +1101,15 @@ public abstract class Crypto
         }
 
         /// <summary>
-        /// Shuffles the input byte array using a deterministic sequence based on the provided key.
-        /// This method performs a keyed permutation to obfuscate the original data order.
+        ///     Shuffles the input byte array using a deterministic sequence based on the provided key.
+        ///     This method performs a keyed permutation to obfuscate the original data order.
         /// </summary>
         /// <param name="input">The byte array to shuffle.</param>
         /// <param name="key">The key used to generate the shuffle pattern.</param>
         /// <returns>A new byte array containing the shuffled data.</returns>
         /// <remarks>
-        /// The same key and input length must be used for the corresponding <see cref="Unshuffle(byte[], byte[])"/> call
-        /// to reverse the operation.
+        ///     The same key and input length must be used for the corresponding <see cref="Unshuffle(byte[], byte[])" /> call
+        ///     to reverse the operation.
         /// </remarks>
         public static byte[] Shuffle(byte[] input, byte[] key)
         {
@@ -1005,13 +1126,13 @@ public abstract class Crypto
         }
 
         /// <summary>
-        /// Reverses the shuffle operation and restores the original order of a byte array shuffled with the same key.
+        ///     Reverses the shuffle operation and restores the original order of a byte array shuffled with the same key.
         /// </summary>
         /// <param name="input">The byte array that was previously shuffled.</param>
         /// <param name="key">The same key used during the shuffle operation.</param>
         /// <returns>A new byte array containing the original unshuffled data.</returns>
         /// <exception cref="ArgumentException">
-        /// Thrown if the key or input lengths are invalid or inconsistent with the original shuffle operation.
+        ///     Thrown if the key or input lengths are invalid or inconsistent with the original shuffle operation.
         /// </exception>
         public static byte[] Unshuffle(byte[] input, byte[] key)
         {
@@ -1036,6 +1157,13 @@ public abstract class Crypto
         /// <returns>A byte array representing the encrypted data.</returns>
         public static byte[] EncryptXChaCha20Poly1305(byte[] input, byte[] key, byte[] nonce)
         {
+            if (input == null || input.Length == 0)
+                throw new ArgumentException("Input data is null or empty.", nameof(input));
+            if (key == null || key.Length == 0)
+                throw new ArgumentException("Encryption key is null or empty.", nameof(key));
+            if (nonce == null || nonce.Length == 0)
+                throw new ArgumentException("IV is null or empty.", nameof(nonce));
+
             var result = SecretAeadXChaCha20Poly1305.Encrypt(input, key, nonce);
 
             return result;
@@ -1050,6 +1178,13 @@ public abstract class Crypto
         /// <returns>A byte array representing the decrypted data.</returns>
         public static byte[] DecryptXChaCha20Poly1305(byte[] input, byte[] nonce, byte[] key)
         {
+            if (input == null || input.Length == 0)
+                throw new ArgumentException("Input data is null or empty.", nameof(input));
+            if (key == null || key.Length == 0)
+                throw new ArgumentException("Encryption key is null or empty.", nameof(key));
+            if (nonce == null || nonce.Length == 0)
+                throw new ArgumentException("IV is null or empty.", nameof(nonce));
+
             var result = SecretAeadXChaCha20Poly1305.Decrypt(input, nonce, key);
 
             return result;
@@ -1185,6 +1320,15 @@ public abstract class Crypto
         /// <returns>The encrypted and authenticated byte array.</returns>
         public static byte[] EncryptThreeFish(byte[] inputText, byte[] key, byte[] iv, byte[] hMacKey)
         {
+            if (inputText == null || inputText.Length == 0)
+                throw new ArgumentException("Value was empty or null.", nameof(inputText));
+            if (key == null || key.Length == 0)
+                throw new ArgumentException("Value was empty or null.", nameof(key));
+            if (iv == null || iv.Length == 0)
+                throw new ArgumentException("Value was empty or null.", nameof(iv));
+            if (hMacKey == null || hMacKey.Length == 0)
+                throw new ArgumentException("Value was empty or null.", nameof(hMacKey));
+
             // Initialize ThreeFish block cipher with CBC mode and PKCS7 padding
             var threeFish = new ThreefishEngine(1024);
             var cipherMode = new CbcBlockCipher(threeFish);
@@ -1225,11 +1369,11 @@ public abstract class Crypto
         /// <exception cref="CryptographicException">Thrown when the authentication tag does not match.</exception>
         public static byte[] DecryptThreeFish(byte[] inputText, byte[] key, byte[] hMacKey)
         {
-            if (inputText == Array.Empty<byte>())
+            if (inputText == null || inputText.Length == 0)
                 throw new ArgumentException("Value was empty or null.", nameof(inputText));
-            if (key == Array.Empty<byte>())
+            if (key == null || key.Length == 0)
                 throw new ArgumentException("Value was empty or null.", nameof(key));
-            if (hMacKey == Array.Empty<byte>())
+            if (hMacKey == null || hMacKey.Length == 0)
                 throw new ArgumentException("Value was empty or null.", nameof(hMacKey));
 
             var receivedHash = new byte[CryptoConstants.HmacLength];
@@ -1283,6 +1427,15 @@ public abstract class Crypto
         /// <returns>The encrypted and authenticated byte array.</returns>
         public static byte[] EncryptSerpent(byte[] inputText, byte[] key, byte[] iv, byte[] hMacKey)
         {
+            if (inputText == null || inputText.Length == 0)
+                throw new ArgumentException("Value was empty or null.", nameof(inputText));
+            if (key == null || key.Length == 0)
+                throw new ArgumentException("Value was empty or null.", nameof(key));
+            if (iv == null || iv.Length == 0)
+                throw new ArgumentException("Value was empty or null.", nameof(iv));
+            if (hMacKey == null || hMacKey.Length == 0)
+                throw new ArgumentException("Value was empty or null.", nameof(hMacKey));
+
             var serpent = new SerpentEngine();
             var cipherMode = new CbcBlockCipher(serpent);
             var padding = new Pkcs7Padding();
@@ -1322,11 +1475,11 @@ public abstract class Crypto
         /// <exception cref="CryptographicException">Thrown when the authentication tag does not match.</exception>
         public static byte[] DecryptSerpent(byte[] inputText, byte[] key, byte[] hMacKey)
         {
-            if (inputText == Array.Empty<byte>())
+            if (inputText == null || inputText.Length == 0)
                 throw new ArgumentException("Value was empty or null.", nameof(inputText));
-            if (key == Array.Empty<byte>())
+            if (key == null || key.Length == 0)
                 throw new ArgumentException("Value was empty or null.", nameof(key));
-            if (hMacKey == Array.Empty<byte>())
+            if (hMacKey == null || hMacKey.Length == 0)
                 throw new ArgumentException("Value was empty or null.", nameof(hMacKey));
 
             var receivedHash = new byte[CryptoConstants.HmacLength];
@@ -1376,8 +1529,8 @@ public abstract class Crypto
     private static class EncryptionDecryption
     {
         /// <summary>
-        /// Encrypts a plaintext byte array using a multi-layer encryption scheme consisting of:
-        /// XChaCha20-Poly1305, Threefish, Serpent, and AES, with an initial shuffle transformation.
+        ///     Encrypts a plaintext byte array using a multi-layer encryption scheme consisting of:
+        ///     XChaCha20-Poly1305, Threefish, Serpent, and AES, with an initial shuffle transformation.
         /// </summary>
         /// <param name="plaintext">The plaintext data to encrypt.</param>
         /// <param name="key">The encryption key for the XChaCha20-Poly1305 layer.</param>
@@ -1389,7 +1542,7 @@ public abstract class Crypto
         /// <param name="hMacKey2">HMAC key for the Serpent layer.</param>
         /// <param name="hMacKey3">HMAC key for the AES layer.</param>
         /// <returns>
-        /// A byte array containing the concatenated nonces and the final encrypted ciphertext.
+        ///     A byte array containing the concatenated nonces and the final encrypted ciphertext.
         /// </returns>
         /// <exception cref="ArgumentException">Thrown when any input array is empty.</exception>
         /// <exception cref="CryptoException">Thrown if an error occurs during any encryption stage.</exception>
@@ -1439,8 +1592,9 @@ public abstract class Crypto
         }
 
         /// <summary>
-        /// Decrypts a byte array that was encrypted with <see cref="EncryptV3"/> using the corresponding multi-layer
-        /// decryption process. This includes AES, Serpent, Threefish, and XChaCha20-Poly1305, followed by an unshuffle operation.
+        ///     Decrypts a byte array that was encrypted with <see cref="EncryptV3" /> using the corresponding multi-layer
+        ///     decryption process. This includes AES, Serpent, Threefish, and XChaCha20-Poly1305, followed by an unshuffle
+        ///     operation.
         /// </summary>
         /// <param name="cipherText">The encrypted data including prepended nonces.</param>
         /// <param name="key">The encryption key for the XChaCha20-Poly1305 layer.</param>
@@ -1505,6 +1659,1121 @@ public abstract class Crypto
                          throw new CryptoException("An error occured during decryption.");
 
             return Algorithms.Unshuffle(result, key5);
+        }
+    }
+
+    public static class FileLogger
+    {
+        private static readonly string LogFilePath =
+            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Desktop), "crypto-log.txt");
+
+        private static readonly object _lock = new();
+
+        public static void Log(string message)
+        {
+            try
+            {
+                var logLine = $"{DateTime.Now:yyyy-MM-dd HH:mm:ss.fff} - {message}";
+                lock (_lock)
+                {
+                    File.AppendAllText(LogFilePath, logLine + Environment.NewLine);
+                }
+            }
+            catch
+            {
+                // Fails silently. You can optionally raise an event or add fallback logging.
+            }
+        }
+
+        public static void LogBytes(string label, byte[] data, int length = 64)
+        {
+            if (data == null)
+            {
+                Log($"{label}: <null>");
+                return;
+            }
+
+            var displayLength = Math.Min(length, data.Length);
+            var hex = BitConverter.ToString(data, 0, displayLength).Replace("-", "");
+            if (displayLength < data.Length)
+                hex += "...";
+
+            Log($"{label} ({data.Length} bytes): {hex}");
+        }
+    }
+
+
+    private sealed class HmacSha3Stream : IDisposable
+    {
+        private readonly HMac hmac;
+        private bool _disposed; // To detect redundant calls
+
+        public HmacSha3Stream(byte[] key, int bits = 512)
+        {
+            IDigest digest = bits switch
+            {
+                224 => new Sha3Digest(224),
+                256 => new Sha3Digest(256),
+                384 => new Sha3Digest(384),
+                _ => new Sha3Digest(512)
+            };
+
+            hmac = new HMac(digest);
+            hmac.Init(new KeyParameter(key));
+        }
+
+        // Public dispose method
+        public void Dispose()
+        {
+            Dispose(true);
+            GC.SuppressFinalize(this);
+        }
+
+        public void Update(byte[] buffer, int offset, int count)
+        {
+            hmac.BlockUpdate(buffer, offset, count);
+        }
+
+        public byte[] Final()
+        {
+            var result = new byte[hmac.GetMacSize()];
+            hmac.DoFinal(result, 0);
+            hmac.Reset();
+            return result;
+        }
+
+        // Protected virtual dispose method
+        private void Dispose(bool disposing)
+        {
+            if (_disposed)
+                return;
+
+            if (disposing)
+            {
+            }
+
+            _disposed = true;
+        }
+    }
+
+    public class LayeredProgressTracker
+    {
+        private readonly List<long> _expectedBytesPerLayer = new();
+        private readonly object _lock = new();
+
+        private readonly IProgress<long>? _reportProgress;
+        private int _currentLayer;
+
+        private long _totalBytesExpected;
+        private long _totalBytesProcessed;
+
+        public LayeredProgressTracker(IProgress<long>? reportProgress = null)
+        {
+            _reportProgress = reportProgress;
+        }
+
+        public void BeginLayer(string name)
+        {
+            lock (_lock)
+            {
+                _currentLayer++;
+                // Ensure list is large enough
+                while (_expectedBytesPerLayer.Count <= _currentLayer)
+                    _expectedBytesPerLayer.Add(0);
+            }
+        }
+
+        public void AddExpectedBytes(long bytes)
+        {
+            lock (_lock)
+            {
+                while (_expectedBytesPerLayer.Count <= _currentLayer)
+                    _expectedBytesPerLayer.Add(0);
+
+                _expectedBytesPerLayer[_currentLayer] += bytes;
+                _totalBytesExpected += bytes;
+                FileLogger.Log($"Total expected bytes: {_totalBytesExpected}");
+            }
+        }
+
+        public void ReportBytesProcessed(long bytes)
+        {
+            lock (_lock)
+            {
+                _totalBytesProcessed += bytes;
+                _reportProgress?.Report(_totalBytesProcessed); // Report INCREMENTAL bytes
+            }
+        }
+
+
+        public void Complete()
+        {
+            lock (_lock)
+            {
+                _totalBytesProcessed = _totalBytesExpected;
+                _reportProgress?.Report(_totalBytesProcessed);
+            }
+        }
+    }
+
+    public static class ParallelCtrEncryptor
+    {
+        internal static async Task EncryptFile(
+            Stream input,
+            Stream output,
+            byte[] keyBytes,
+            byte[] hkdfSalt,
+            IProgress<double> progress)
+        {
+            FileLogger.Log("EncryptFile: Starting encryption process.");
+
+            var encryptedTempPath = Path.GetTempFileName();
+
+            try
+            {
+                using var bufferSet = BufferInit.InitBuffers(keyBytes, hkdfSalt);
+
+                // Step 1: Encrypt to temporary encrypted file
+                FileLogger.Log("EncryptFile: Writing encrypted output to temp file...");
+                await using (var encryptedTempStream =
+                             File.Open(encryptedTempPath, FileMode.Create, FileAccess.Write, FileShare.None))
+                {
+                    await EncryptV3(
+                            input,
+                            encryptedTempStream,
+                            bufferSet.Key, bufferSet.Key2, bufferSet.Key3, bufferSet.Key4, bufferSet.Key5,
+                            bufferSet.HMacKey, bufferSet.HMacKey2, bufferSet.HMacKey3,
+                            progress)
+                        .ConfigureAwait(false);
+                }
+
+                // Step 2: Copy encrypted temp file to final output stream
+                FileLogger.Log("EncryptFile: Copying encrypted data to output stream...");
+                await using (var encryptedTempRead = File.OpenRead(encryptedTempPath))
+                {
+                    await encryptedTempRead.CopyToAsync(output).ConfigureAwait(false);
+                    await output.FlushAsync().ConfigureAwait(false);
+                }
+
+                CryptoUtilities.ClearMemoryNative(bufferSet.BuffersToClear);
+                FileLogger.Log("EncryptFile: Cleared sensitive buffers.");
+            }
+            finally
+            {
+                if (File.Exists(encryptedTempPath))
+                    File.Delete(encryptedTempPath);
+            }
+        }
+
+
+        internal static async Task DecryptFile(
+            Stream input,
+            Stream output,
+            byte[] keyBytes,
+            byte[] hkdfSalt,
+            IProgress<double> progress)
+        {
+            FileLogger.Log("DecryptFile: Starting decryption process.");
+
+            var decryptedTempPath = Path.GetTempFileName();
+
+            try
+            {
+                using var bufferSet = BufferInit.InitBuffers(keyBytes, hkdfSalt);
+
+                // Step 1: Decrypt input stream to a temp file
+                FileLogger.Log("DecryptFile: Decrypting stream to temp file...");
+                await using (var decryptedTempStream =
+                             File.Open(decryptedTempPath, FileMode.Create, FileAccess.Write, FileShare.None))
+                {
+                    await DecryptV3(
+                            input,
+                            decryptedTempStream,
+                            bufferSet.Key, bufferSet.Key2, bufferSet.Key3, bufferSet.Key4, bufferSet.Key5,
+                            bufferSet.HMacKey, bufferSet.HMacKey2, bufferSet.HMacKey3,
+                            progress)
+                        .ConfigureAwait(false);
+                }
+
+                // Step 2: Copy decrypted temp file to output stream
+                FileLogger.Log("DecryptFile: Copying decrypted output to final output stream...");
+                await using (var decryptedTempRead = File.OpenRead(decryptedTempPath))
+                {
+                    await decryptedTempRead.CopyToAsync(output).ConfigureAwait(false);
+                    await output.FlushAsync().ConfigureAwait(false);
+                }
+
+                CryptoUtilities.ClearMemoryNative(bufferSet.BuffersToClear);
+                FileLogger.Log("DecryptFile: Cleared sensitive buffers.");
+            }
+            finally
+            {
+                if (File.Exists(decryptedTempPath))
+                    File.Delete(decryptedTempPath);
+            }
+        }
+
+
+        // EncryptV3 with logging
+        private static async Task EncryptV3(
+            Stream inputStream,
+            Stream outputStream,
+            byte[] xchachaKey,
+            byte[] threefishKey,
+            byte[] serpentKey,
+            byte[] aesKey,
+            byte[] shuffleKey,
+            byte[] threefishHmacKey,
+            byte[] serpentHmacKey,
+            byte[] aesHmacKey,
+            IProgress<double>? progress,
+            int chunkSize = 64 * 1024)
+        {
+            FileLogger.Log("EncryptV3: Starting");
+
+            // Generate IVs/Nonces
+            var xchachaNonce = CryptoUtilities.RndByteSized(16);
+            var threefishIv = CryptoUtilities.RndByteSized(120);
+            var serpentIv = CryptoUtilities.RndByteSized(8);
+            var aesIv = CryptoUtilities.RndByteSized(8);
+
+            // Create temp file paths
+            var shuffledPath = Path.GetTempFileName();
+            var temp1Path = Path.GetTempFileName();
+            var temp2Path = Path.GetTempFileName();
+            var temp3Path = Path.GetTempFileName();
+            var temp4Path = Path.GetTempFileName();
+
+            try
+            {
+                var shuffledProgress = CreateSegmentedProgress(inputStream.Length, 0, 20, progress);
+                await using (var shuffledOut = File.OpenWrite(shuffledPath))
+                {
+                    await ShuffleStreamAsync(inputStream, shuffledOut, shuffleKey, shuffledProgress);
+                }
+
+                var shuffleSize = new FileInfo(shuffledPath).Length;
+                var xChaChaProgress = CreateSegmentedProgress(shuffleSize, 20, 40, progress);
+
+                await using (var xIn = File.OpenRead(shuffledPath))
+                await using (var xOut = File.Create(temp1Path))
+                {
+                    await EncryptXChaCha20Poly1305ParallelRawAsync(xIn, xOut, xchachaKey, xchachaNonce,
+                        xChaChaProgress);
+                }
+
+                var xchachaSize = new FileInfo(temp1Path).Length;
+                var threeFishProgress = CreateSegmentedProgress(xchachaSize, 40, 60, progress);
+
+                byte[] threefishTag;
+                await using (var tIn = File.OpenRead(temp1Path))
+                await using (var tOut = File.Create(temp2Path))
+                {
+                    threefishTag = await EncryptParallelAsync(
+                        tIn, tOut, threefishKey, threefishHmacKey, () => new ThreefishEngine(1024), threefishIv,
+                        threeFishProgress, chunkSize);
+                }
+
+                var threefishSize = new FileInfo(temp2Path).Length;
+                var serpentProgress = CreateSegmentedProgress(threefishSize, 60, 80, progress);
+
+                byte[] serpentTag;
+                await using (var sIn = File.OpenRead(temp2Path))
+                await using (var sOut = File.Create(temp3Path))
+                {
+                    serpentTag = await EncryptParallelAsync(
+                        sIn, sOut, serpentKey, serpentHmacKey, () => new SerpentEngine(), serpentIv,
+                        serpentProgress, chunkSize);
+                }
+
+                var serpentSize = new FileInfo(temp3Path).Length;
+                var aesProgress = CreateSegmentedProgress(serpentSize, 80, 90, progress);
+
+                byte[] aesTag;
+                await using (var aIn = File.OpenRead(temp3Path))
+                await using (var aOut = File.Create(temp4Path))
+                {
+                    aesTag = await EncryptParallelAsync(
+                        aIn, aOut, aesKey, aesHmacKey, () => new AesEngine(), aesIv,
+                        aesProgress, chunkSize);
+                }
+
+                await outputStream.WriteAsync(xchachaNonce);
+                await outputStream.WriteAsync(threefishIv);
+                await outputStream.WriteAsync(threefishTag);
+                await outputStream.WriteAsync(serpentIv);
+                await outputStream.WriteAsync(serpentTag);
+                await outputStream.WriteAsync(aesIv);
+                await outputStream.WriteAsync(aesTag);
+                progress.Report(95);
+
+                await using (var finalCipher = File.OpenRead(temp4Path))
+                {
+                    await outputStream.FlushAsync().ConfigureAwait(false);
+                    await finalCipher.CopyToAsync(outputStream);
+                    outputStream.Position = 0;
+                    inputStream.Seek(0, SeekOrigin.Begin);
+                }
+
+                progress.Report(100);
+            }
+            catch (Exception ex)
+            {
+                FileLogger.Log($"Encryption error: {ex}");
+                throw;
+            }
+            finally
+            {
+                FileLogger.Log("EncryptV3: Cleaning up temporary files");
+                await IO.SecurelyWipeFileAsync(shuffledPath);
+                await IO.SecurelyWipeFileAsync(temp1Path);
+                await IO.SecurelyWipeFileAsync(temp2Path);
+                await IO.SecurelyWipeFileAsync(temp3Path);
+                await IO.SecurelyWipeFileAsync(temp4Path);
+            }
+        }
+
+        // DecryptV3 with logging
+        private static async Task DecryptV3(
+            Stream inputStream,
+            Stream outputStream,
+            byte[] xchachaKey,
+            byte[] threefishKey,
+            byte[] serpentKey,
+            byte[] aesKey,
+            byte[] shuffleKey,
+            byte[] threefishHmacKey,
+            byte[] serpentHmacKey,
+            byte[] aesHmacKey,
+            IProgress<double>? progress,
+            int chunkSize = 64 * 1024)
+        {
+            FileLogger.Log("DecryptV3: Starting decryption");
+
+            // Sizes for IVs and tags as constants
+            const int xchachaNonceSize = 16;
+            const int threefishIvSize = 120;
+            const int hmacTagSize = 64; // Assuming 64 bytes tag length for all HMACs, adjust if different
+            const int serpentIvSize = 8;
+            const int aesIvSize = 8;
+
+            // Read IVs and Tags sequentially
+            var xchachaNonce = await ReadExactAsync(inputStream, xchachaNonceSize);
+            var threefishIv = await ReadExactAsync(inputStream, threefishIvSize);
+            var threefishTag = await ReadExactAsync(inputStream, hmacTagSize);
+            var serpentIv = await ReadExactAsync(inputStream, serpentIvSize);
+            var serpentTag = await ReadExactAsync(inputStream, hmacTagSize);
+            var aesIv = await ReadExactAsync(inputStream, aesIvSize);
+            var aesTag = await ReadExactAsync(inputStream, hmacTagSize);
+
+            // Create temp files for intermediate layers
+            var tempAesOutPath = Path.GetTempFileName();
+            var tempSerpentOutPath = Path.GetTempFileName();
+            var tempThreefishOutPath = Path.GetTempFileName();
+            var tempXChachaOutPath = Path.GetTempFileName();
+            var tempUnshufflePath = Path.GetTempFileName();
+            try
+            {
+                var aesOutput = CreateSegmentedProgress(inputStream.Length, 0, 20, progress);
+                await using (var aesOut = File.Create(tempAesOutPath))
+                {
+                    await DecryptParallelAsync(
+                        inputStream,
+                        aesOut,
+                        aesKey,
+                        aesHmacKey,
+                        () => new AesEngine(),
+                        aesIv,
+                        aesTag,
+                        aesOutput,
+                        chunkSize);
+                }
+
+                var serpentProgress = CreateSegmentedProgress(new FileInfo(tempAesOutPath).Length, 20, 40, progress);
+
+                // Step 2: Serpent decryption
+                FileLogger.Log("Step 2: Decrypting Serpent layer");
+
+                await using (var serpentIn = File.OpenRead(tempAesOutPath))
+                await using (var serpentOut = File.Create(tempSerpentOutPath))
+                {
+                    await DecryptParallelAsync(
+                        serpentIn,
+                        serpentOut,
+                        serpentKey,
+                        serpentHmacKey,
+                        () => new SerpentEngine(),
+                        serpentIv,
+                        serpentTag,
+                        serpentProgress,
+                        chunkSize);
+                }
+
+                var threefishProgress =
+                    CreateSegmentedProgress(new FileInfo(tempSerpentOutPath).Length, 40, 60, progress);
+
+                // Step 3: Threefish decryption
+                FileLogger.Log("Step 3: Decrypting Threefish layer");
+
+                await using (var threefishIn = File.OpenRead(tempSerpentOutPath))
+                await using (var threefishOut = File.Create(tempThreefishOutPath))
+                {
+                    await DecryptParallelAsync(
+                        threefishIn,
+                        threefishOut,
+                        threefishKey,
+                        threefishHmacKey,
+                        () => new ThreefishEngine(1024),
+                        threefishIv,
+                        threefishTag,
+                        threefishProgress,
+                        chunkSize);
+                }
+
+                var xChaProgress = CreateSegmentedProgress(new FileInfo(tempThreefishOutPath).Length, 60, 80, progress);
+
+                await using (var xchachaIn = File.OpenRead(tempThreefishOutPath))
+                await using (var xchachaOut = File.Create(tempXChachaOutPath))
+                {
+                    await DecryptXChaCha20Poly1305ParallelRawAsync(
+                        xchachaIn,
+                        xchachaOut,
+                        xchachaKey,
+                        xchachaNonce,
+                        xChaProgress);
+                }
+
+                // Step 5: Unshuffle
+                FileLogger.Log("Step 5: Unshuffling final output");
+
+                await using (var shuffledIn = File.OpenRead(tempXChachaOutPath))
+                {
+                    var unshuffProgress =
+                        CreateSegmentedProgress(new FileInfo(tempXChachaOutPath).Length, 80, 95, progress);
+                    await UnshuffleStreamAsync(shuffledIn, outputStream, shuffleKey, unshuffProgress);
+                    await using (var finalCipher = File.OpenRead(tempUnshufflePath))
+                    {
+                        await outputStream.FlushAsync().ConfigureAwait(false);
+                        await finalCipher.CopyToAsync(outputStream);
+                        progress?.Report(100);
+                    }
+
+                    if (outputStream.CanSeek)
+                        outputStream.Position = 0;
+                    else
+                        FileLogger.Log("Final output stream is not seekable.");
+                }
+
+                FileLogger.Log("DecryptV3: Completed successfully");
+            }
+            catch (Exception ex)
+            {
+                FileLogger.Log($"DecryptV3: EXCEPTION: {ex}");
+                throw;
+            }
+            finally
+            {
+                FileLogger.Log("DecryptV3: Cleaning up temporary files");
+                await IO.SecurelyWipeFileAsync(tempAesOutPath);
+                await IO.SecurelyWipeFileAsync(tempSerpentOutPath);
+                await IO.SecurelyWipeFileAsync(tempThreefishOutPath);
+                await IO.SecurelyWipeFileAsync(tempXChachaOutPath);
+            }
+        }
+
+
+        // EncryptParallelAsync with logging
+        private static async Task<byte[]> EncryptParallelAsync(
+            Stream input,
+            Stream output,
+            byte[] key,
+            byte[] hmacKey,
+            Func<IBlockCipher> cipherFactory,
+            byte[] baseIv,
+            IProgress<long> progress = null,
+            int chunkSize = 64 * 1024,
+            int maxParallelism = 4)
+        {
+            FileLogger.Log("=== EncryptParallelAsync: Starting encryption ===");
+            FileLogger.Log(
+                $"EncryptParallelAsync: Base IV ({baseIv.Length} bytes): {DataConversionHelpers.ByteArrayToHexString(baseIv)}");
+
+            using var hmac = new HmacSha3Stream(hmacKey);
+            using var sha256 = SHA256.Create();
+
+            var options = new ExecutionDataflowBlockOptions
+            {
+                MaxDegreeOfParallelism = maxParallelism,
+                EnsureOrdered = true
+            };
+
+            var encryptBlock =
+                new TransformBlock<(byte[] buffer, int bytesRead, long index), (int index, byte[] ciphertext, int length
+                    )>(
+                    task =>
+                    {
+                        var (buffer, bytesRead, index) = task;
+
+                        var engine = cipherFactory();
+                        var cipher = new SicBlockCipher(engine);
+                        var blockSize = cipher.GetBlockSize();
+
+                        var nonce = DeriveNonce(baseIv, index, blockSize);
+                        cipher.Init(true, new ParametersWithIV(new KeyParameter(key), nonce));
+
+                        var encrypted = new byte[bytesRead];
+                        var processed = 0;
+
+                        // Process full blocks
+                        var fullBlocks = bytesRead / blockSize;
+                        for (var i = 0; i < fullBlocks; i++)
+                        {
+                            cipher.ProcessBlock(buffer, i * blockSize, encrypted, i * blockSize);
+                            processed += blockSize;
+                        }
+
+                        // Handle partial last block if any
+                        var remaining = bytesRead - processed;
+                        if (remaining > 0)
+                        {
+                            // CTR mode: last partial block encryption by XOR with keystream block
+                            // Generate one keystream block
+                            var keystreamBlock = new byte[blockSize];
+                            cipher.ProcessBlock(new byte[blockSize], 0, keystreamBlock, 0);
+
+                            for (var i = 0; i < remaining; i++)
+                                encrypted[processed + i] = (byte)(buffer[processed + i] ^ keystreamBlock[i]);
+                        }
+
+                        return ((int)index, encrypted, bytesRead);
+                    }, options);
+
+            long totalBytesProcessed = 0;
+
+            var writeBlock = new ActionBlock<(int index, byte[] ciphertext, int length)>(
+                async result =>
+                {
+                    var (index, ciphertext, length) = result;
+                    await output.WriteAsync(ciphertext, 0, length).ConfigureAwait(false);
+
+                    hmac.Update(ciphertext, 0, length);
+
+                    var newTotal = Interlocked.Add(ref totalBytesProcessed, length);
+
+                    // Report raw bytes processed instead of percentage
+                    progress.Report(newTotal);
+                },
+                new ExecutionDataflowBlockOptions
+                {
+                    MaxDegreeOfParallelism = 1
+                });
+
+
+            encryptBlock.LinkTo(writeBlock, new DataflowLinkOptions { PropagateCompletion = true });
+
+            long chunkIndex = 0;
+            while (true)
+            {
+                var buffer = new byte[chunkSize];
+                var bytesRead = await input.ReadAsync(buffer, 0, buffer.Length).ConfigureAwait(false);
+                if (bytesRead == 0)
+                    break;
+
+                if (bytesRead < buffer.Length)
+                    Array.Resize(ref buffer, bytesRead);
+
+                await encryptBlock.SendAsync((buffer, bytesRead, chunkIndex)).ConfigureAwait(false);
+                chunkIndex++;
+            }
+
+            encryptBlock.Complete();
+            await writeBlock.Completion.ConfigureAwait(false);
+
+            // Finalize HMAC
+            var hmacTag = hmac.Final();
+
+            return hmacTag;
+        }
+
+        private static async Task DecryptParallelAsync(Stream input,
+            Stream output,
+            byte[] key,
+            byte[] hmacKey,
+            Func<IBlockCipher> cipherFactory,
+            byte[] baseIv,
+            byte[] expectedTag,
+            IProgress<long>? progress = null,
+            int chunkSize = 64 * 1024,
+            int maxParallelism = 4)
+        {
+            FileLogger.Log("=== DecryptParallelAsync: Starting decryption ===");
+            FileLogger.LogBytes("DecryptParallelAsync: Base IV", baseIv);
+            FileLogger.LogBytes("DecryptParallelAsync: Expected HMAC Tag", expectedTag);
+
+            using var hmac = new HmacSha3Stream(hmacKey);
+            using var sha256 = SHA256.Create();
+
+            var channel = Channel.CreateBounded<(int index, byte[] ciphertext)>(maxParallelism * 2);
+            var writer = channel.Writer;
+            var reader = channel.Reader;
+
+            var chunkIndex = 0;
+
+            // Producer reads until end of stream
+            var producer = Task.Run(async () =>
+            {
+                var buffer = new byte[chunkSize];
+                int bytesRead;
+
+                while ((bytesRead = await input.ReadAsync(buffer, 0, chunkSize).ConfigureAwait(false)) > 0)
+                {
+                    var chunk = new byte[bytesRead];
+                    Buffer.BlockCopy(buffer, 0, chunk, 0, bytesRead);
+
+                    hmac.Update(chunk, 0, chunk.Length);
+                    sha256.TransformBlock(chunk, 0, chunk.Length, null, 0);
+
+                    await writer.WriteAsync((chunkIndex++, chunk)).ConfigureAwait(false);
+                }
+
+                writer.Complete();
+            });
+
+            var processedChunks = new ConcurrentDictionary<int, byte[]>();
+            var nextWriteIndex = 0;
+            var writeLock = new SemaphoreSlim(1, 1);
+
+            var processors = Enumerable.Range(0, maxParallelism).Select(_ => Task.Run(async () =>
+            {
+                await foreach (var (index, ciphertext) in reader.ReadAllAsync())
+                {
+                    var engine = cipherFactory();
+                    var cipher = new SicBlockCipher(engine);
+                    var blockSize = cipher.GetBlockSize();
+
+                    var nonce = DeriveNonce(baseIv, index, blockSize);
+                    FileLogger.LogBytes($"DecryptParallelAsync: Nonce [chunk {index}]", nonce);
+
+                    cipher.Init(false, new ParametersWithIV(new KeyParameter(key), nonce));
+
+                    var decrypted = new byte[ciphertext.Length];
+                    var processed = 0;
+
+                    var fullBlocks = ciphertext.Length / blockSize;
+                    for (var i = 0; i < fullBlocks; i++)
+                    {
+                        cipher.ProcessBlock(ciphertext, i * blockSize, decrypted, i * blockSize);
+                        processed += blockSize;
+                    }
+
+                    var remaining = ciphertext.Length - processed;
+                    if (remaining > 0)
+                    {
+                        var keystreamBlock = new byte[blockSize];
+                        cipher.ProcessBlock(new byte[blockSize], 0, keystreamBlock, 0);
+                        for (var i = 0; i < remaining; i++)
+                            decrypted[processed + i] = (byte)(ciphertext[processed + i] ^ keystreamBlock[i]);
+                    }
+
+                    processedChunks[index] = decrypted;
+
+                    await writeLock.WaitAsync().ConfigureAwait(false);
+                    try
+                    {
+                        while (processedChunks.TryRemove(nextWriteIndex, out var readyPlaintext))
+                        {
+                            await output.WriteAsync(readyPlaintext, 0, readyPlaintext.Length).ConfigureAwait(false);
+                            progress?.Report(readyPlaintext.Length);
+                            nextWriteIndex++;
+                        }
+                    }
+                    finally
+                    {
+                        writeLock.Release();
+                    }
+                }
+            })).ToArray();
+
+            await producer.ConfigureAwait(false);
+            await Task.WhenAll(processors).ConfigureAwait(false);
+
+            sha256.TransformFinalBlock(Array.Empty<byte>(), 0, 0);
+            var ciphertextHash = BitConverter.ToString(sha256.Hash!).Replace("-", "");
+            FileLogger.Log($"DecryptParallelAsync: Ciphertext SHA256 hash: {ciphertextHash}");
+
+            var actualTag = hmac.Final();
+
+            if (actualTag.Length > expectedTag.Length)
+                actualTag = actualTag.AsSpan(0, expectedTag.Length).ToArray();
+
+            FileLogger.LogBytes("DecryptParallelAsync: Computed HMAC Tag", actualTag);
+
+            if (!CryptographicOperations.FixedTimeEquals(expectedTag, actualTag))
+            {
+                FileLogger.Log("DecryptParallelAsync: HMAC verification failed!");
+                throw new CryptographicException("HMAC verification failed.");
+            }
+
+            await output.FlushAsync().ConfigureAwait(false);
+            FileLogger.Log("=== DecryptParallelAsync: Decryption complete ===");
+
+            writeLock.Dispose();
+        }
+
+
+        private static async Task EncryptXChaCha20Poly1305ParallelRawAsync(
+            Stream input,
+            Stream output,
+            byte[] key,
+            byte[] baseNonce,
+            IProgress<long>? progress = null,
+            int chunkSize = 64 * 1024,
+            int maxParallelism = 4)
+        {
+            using var semaphore = new SemaphoreSlim(maxParallelism);
+            var tasks = new List<Task>();
+            var writeLock = new object();
+            var chunkIndex = 0;
+
+            FileLogger.Log(
+                $"EncryptXChaCha20: Starting encryption. Chunk size: {chunkSize}, Max parallelism: {maxParallelism}");
+
+            while (true)
+            {
+                var buffer = new byte[chunkSize];
+                var bytesRead = await input.ReadAsync(buffer, 0, chunkSize);
+                if (bytesRead <= 0)
+                {
+                    FileLogger.Log("EncryptXChaCha20: Reached end of input stream.");
+                    break;
+                }
+
+                var chunk = new byte[bytesRead];
+                Buffer.BlockCopy(buffer, 0, chunk, 0, bytesRead);
+
+                var currentIndex = chunkIndex++;
+                await semaphore.WaitAsync();
+
+                FileLogger.Log($"EncryptXChaCha20: Chunk {currentIndex}, plaintext size = {bytesRead}");
+
+                tasks.Add(Task.Run(() =>
+                {
+                    try
+                    {
+                        var nonce = DeriveNonce(baseNonce, currentIndex, 24);
+
+                        var ciphertext = SecretAeadXChaCha20Poly1305.Encrypt(chunk, nonce, key);
+
+                        lock (writeLock)
+                        {
+                            var lenBytes = BitConverter.GetBytes(ciphertext.Length);
+                            output.Write(lenBytes, 0, 4);
+                            output.Write(ciphertext, 0, ciphertext.Length);
+
+                            FileLogger.Log(
+                                $"EncryptXChaCha20: Chunk {currentIndex} written. Ciphertext + tag length = {ciphertext.Length}");
+                        }
+
+                        progress?.Report(bytesRead);
+                    }
+                    catch (Exception ex)
+                    {
+                        FileLogger.Log($"EncryptXChaCha20: Chunk {currentIndex} FAILED: {ex}");
+                        throw;
+                    }
+                    finally
+                    {
+                        semaphore.Release();
+                    }
+                }));
+            }
+
+            await Task.WhenAll(tasks);
+            FileLogger.Log("EncryptXChaCha20: All chunks encrypted.");
+        }
+
+
+        private static async Task DecryptXChaCha20Poly1305ParallelRawAsync(
+            Stream input,
+            Stream output,
+            byte[] key,
+            byte[] baseNonce,
+            IProgress<long>? progress = null,
+            int chunkSize = 64 * 1024,
+            int maxParallelism = 4)
+        {
+            FileLogger.Log("DecryptXChaCha20: Started");
+
+            var semaphore = new SemaphoreSlim(maxParallelism);
+            var tasks = new List<Task>();
+            var chunkOutputs = new ConcurrentDictionary<long, byte[]>();
+            var progressLock = new object();
+
+            long totalBytesProcessed = 0;
+            long chunkIndex = 0;
+
+            while (true)
+            {
+                FileLogger.Log($"DecryptXChaCha20: Reading chunk at input position {input.Position}");
+
+                var lenBytes = new byte[4];
+                var lenRead = await input.ReadAsync(lenBytes, 0, 4);
+                if (lenRead == 0) break; // End of stream
+                if (lenRead < 4)
+                    throw new EndOfStreamException("Failed to read full chunk length prefix.");
+
+                var chunkLength = BitConverter.ToInt32(lenBytes, 0);
+                if (chunkLength <= 0 || chunkLength > 100 * 1024 * 1024)
+                    throw new InvalidDataException($"Invalid chunk length: {chunkLength}");
+
+                if (input.Length - input.Position < chunkLength)
+                    throw new InvalidDataException("Input does not contain enough bytes for declared chunk.");
+
+                var buffer = new byte[chunkLength];
+                var actualRead = await ReadExactAsync(input, buffer, chunkLength);
+                if (actualRead != chunkLength)
+                    throw new EndOfStreamException("Did not receive expected chunk bytes.");
+
+                FileLogger.Log($"DecryptXChaCha20: Chunk {chunkIndex}, ciphertext length = {actualRead}");
+
+                var currentIndex = chunkIndex++;
+                var ciphertext = buffer;
+
+                await semaphore.WaitAsync();
+
+                tasks.Add(Task.Run(() =>
+                {
+                    try
+                    {
+                        var nonce = DeriveNonce(baseNonce, currentIndex, 24);
+
+                        FileLogger.Log(
+                            $"DecryptXChaCha20: Decrypting chunk {currentIndex} with nonce: {Convert.ToHexString(nonce)}");
+
+                        var plaintext = SecretAeadXChaCha20Poly1305.Decrypt(ciphertext, nonce, key);
+
+                        chunkOutputs[currentIndex] = plaintext;
+
+                        lock (progressLock)
+                        {
+                            totalBytesProcessed += plaintext.Length;
+                            progress?.Report(totalBytesProcessed);
+                        }
+
+                        FileLogger.Log($"DecryptXChaCha20: Chunk {currentIndex} successfully decrypted.");
+                    }
+                    catch (Exception ex)
+                    {
+                        FileLogger.Log($"DecryptXChaCha20: Chunk {currentIndex} failed: {ex}");
+                        throw;
+                    }
+                    finally
+                    {
+                        semaphore.Release();
+                    }
+                }));
+            }
+
+            await Task.WhenAll(tasks);
+
+            FileLogger.Log("DecryptXChaCha20: Writing chunks to output in order.");
+            for (var i = 0; i < chunkIndex; i++)
+                if (chunkOutputs.TryGetValue(i, out var chunk))
+                {
+                    await output.WriteAsync(chunk, 0, chunk.Length);
+                }
+                else
+                {
+                    FileLogger.Log($"DecryptXChaCha20: Missing chunk {i} in output map!");
+                    throw new InvalidOperationException($"Missing chunk {i}");
+                }
+
+            FileLogger.Log("DecryptXChaCha20: Completed");
+        }
+
+        private static byte[] DeriveNonce(byte[] baseIv, long index, int requiredLength)
+        {
+            if (baseIv.Length > requiredLength - 8)
+                throw new ArgumentException("Base IV too long for derived nonce");
+
+            var nonce = new byte[requiredLength];
+            Buffer.BlockCopy(baseIv, 0, nonce, 0, baseIv.Length);
+            Buffer.BlockCopy(BitConverter.GetBytes((ulong)index), 0, nonce, requiredLength - 8, 8);
+            return nonce;
+        }
+
+        private static async Task ShuffleStreamAsync(Stream input, Stream output, byte[] key,
+            IProgress<long>? progress = null)
+        {
+            if (input == null || input.Length == 0)
+                throw new ArgumentException("Input stream was null or empty.", nameof(input));
+            if (!input.CanSeek)
+                throw new NotSupportedException("Input stream must support seeking.");
+
+            const int chunkSize = 64 * 1024; // 64 KB
+            const long blockSize = 2L * 1024 * 1024 * 1024; // 2 GB
+            var totalBlocks = (input.Length + blockSize - 1) / blockSize;
+            var ioLock = new SemaphoreSlim(1, 1);
+            long totalBytesWritten = 0;
+
+            for (long blockIndex = 0; blockIndex < totalBlocks; blockIndex++)
+            {
+                var blockStart = blockIndex * blockSize;
+                var remaining = input.Length - blockStart;
+                var currentBlockSize = Math.Min(blockSize, remaining);
+                var chunkCount = (int)((currentBlockSize + chunkSize - 1) / chunkSize);
+
+                if (currentBlockSize <= 0)
+                    continue;
+
+                var indices = GenerateSecureShuffleIndices(chunkCount, key, blockIndex);
+                var chunks = new byte[chunkCount][];
+
+                await Parallel.ForEachAsync(
+                    Enumerable.Range(0, chunkCount),
+                    new ParallelOptions { MaxDegreeOfParallelism = Environment.ProcessorCount },
+                    async (i, _) =>
+                    {
+                        var buffer = new byte[chunkSize];
+                        await ioLock.WaitAsync();
+                        try
+                        {
+                            input.Seek(blockStart + (long)i * chunkSize, SeekOrigin.Begin);
+                            var read = await input.ReadAsync(buffer, 0, chunkSize).ConfigureAwait(false);
+                            chunks[i] = buffer.AsSpan(0, read).ToArray();
+                        }
+                        finally
+                        {
+                            ioLock.Release();
+                        }
+
+                        CryptographicOperations.ZeroMemory(buffer);
+                    });
+
+                var shuffledChunks = new byte[chunkCount][];
+                for (var i = 0; i < chunkCount; i++)
+                {
+                    if (chunks[i] == null)
+                        throw new InvalidOperationException($"Chunk {i} was null in block {blockIndex}");
+
+                    shuffledChunks[indices[i]] = chunks[i];
+                }
+
+                double lastReportedPercent = 0;
+
+                foreach (var chunk in shuffledChunks)
+                {
+                    await output.WriteAsync(chunk, 0, chunk.Length).ConfigureAwait(false);
+                    var written = Interlocked.Add(ref totalBytesWritten, chunk.Length);
+
+                    if (progress != null)
+                    {
+                        var percent = 100.0 * written / input.Length;
+                        if (Math.Abs(percent - lastReportedPercent) >= 2)
+                        {
+                            lastReportedPercent = percent;
+                            progress.Report(written); // ✅ report actual bytes written (long)
+                        }
+                    }
+
+                    CryptographicOperations.ZeroMemory(chunk);
+                }
+            }
+        }
+
+
+        private static async Task UnshuffleStreamAsync(Stream input, Stream output, byte[] key,
+            IProgress<long>? progress = null)
+        {
+            if (input == null || input.Length == 0)
+                throw new ArgumentException("Input stream was null or empty.", nameof(input));
+            if (!input.CanSeek)
+                throw new NotSupportedException("Input stream must support seeking.");
+
+            const int chunkSize = 64 * 1024;
+            const long blockSize = 2L * 1024 * 1024 * 1024;
+            var totalBlocks = (input.Length + blockSize - 1) / blockSize;
+            var ioLock = new SemaphoreSlim(1, 1);
+            long totalBytesWritten = 0;
+
+            for (long blockIndex = 0; blockIndex < totalBlocks; blockIndex++)
+            {
+                var blockStart = blockIndex * blockSize;
+                var remaining = input.Length - blockStart;
+                var currentBlockSize = Math.Min(blockSize, remaining);
+                var chunkCount = (int)((currentBlockSize + chunkSize - 1) / chunkSize);
+
+                var indices = GenerateSecureShuffleIndices(chunkCount, key, blockIndex);
+                var shuffledChunks = new byte[chunkCount][];
+
+                await Parallel.ForEachAsync(
+                    Enumerable.Range(0, chunkCount),
+                    new ParallelOptions { MaxDegreeOfParallelism = Environment.ProcessorCount },
+                    async (i, _) =>
+                    {
+                        var buffer = new byte[chunkSize];
+                        await ioLock.WaitAsync();
+                        try
+                        {
+                            input.Seek(blockStart + (long)i * chunkSize, SeekOrigin.Begin);
+                            var read = await input.ReadAsync(buffer, 0, chunkSize).ConfigureAwait(false);
+                            shuffledChunks[i] = buffer.AsSpan(0, read).ToArray();
+                        }
+                        finally
+                        {
+                            ioLock.Release();
+                        }
+
+                        CryptographicOperations.ZeroMemory(buffer);
+                    });
+
+                var unshuffledChunks = new byte[chunkCount][];
+                for (var i = 0; i < chunkCount; i++)
+                {
+                    var shuffledIndex = indices[i];
+                    unshuffledChunks[i] = shuffledChunks[shuffledIndex];
+                }
+
+                foreach (var chunk in unshuffledChunks)
+                {
+                    await output.WriteAsync(chunk, 0, chunk.Length).ConfigureAwait(false);
+                    CryptographicOperations.ZeroMemory(chunk);
+
+                    Interlocked.Add(ref totalBytesWritten, chunk.Length);
+                    progress?.Report(totalBytesWritten);
+                }
+
+                totalBytesWritten += currentBlockSize;
+            }
+        }
+
+
+        public static int[] GenerateSecureShuffleIndices(int count, byte[] key, long blockIndex)
+        {
+            using var hmac = new HmacSha3Stream(key);
+
+            // Convert blockIndex to bytes
+            var blockIndexBytes = BitConverter.GetBytes(blockIndex);
+
+            // Feed bytes into HMAC
+            hmac.Update(blockIndexBytes, 0, blockIndexBytes.Length);
+
+            // Compute the final HMAC digest
+            var seedBytes = hmac.Final();
+
+            // Extract seed int (non-negative)
+            var seed = BitConverter.ToInt32(seedBytes, 0) & 0x7FFFFFFF;
+
+            var rng = new Random(seed);
+            var indices = Enumerable.Range(0, count).ToArray();
+
+            for (var i = count - 1; i > 0; i--)
+            {
+                var j = rng.Next(i + 1);
+                (indices[i], indices[j]) = (indices[j], indices[i]);
+            }
+
+            return indices;
         }
     }
 }

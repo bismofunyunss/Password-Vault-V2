@@ -68,9 +68,9 @@ namespace Password_Vault_V2
             vaultBox.Controls.Add(DeleteRowBtn);
             vaultBox.Font = new Font("Century Gothic", 11F, FontStyle.Regular, GraphicsUnit.Point, 0);
             vaultBox.ForeColor = Color.WhiteSmoke;
-            vaultBox.Location = new Point(17, 3);
+            vaultBox.Location = new Point(13, 12);
             vaultBox.Name = "vaultBox";
-            vaultBox.Size = new Size(656, 438);
+            vaultBox.Size = new Size(662, 439);
             vaultBox.TabIndex = 9;
             vaultBox.TabStop = false;
             vaultBox.Text = "Vault";
@@ -258,12 +258,15 @@ namespace Password_Vault_V2
             // 
             // Vault
             // 
-            AutoScaleDimensions = new SizeF(10F, 25F);
-            AutoScaleMode = AutoScaleMode.Font;
+            AutoScaleDimensions = new SizeF(144F, 144F);
+            AutoScaleMode = AutoScaleMode.Dpi;
             BackColor = Color.FromArgb(30, 30, 30);
             Controls.Add(vaultBox);
+            DoubleBuffered = true;
             Name = "Vault";
-            Size = new Size(691, 487);
+            Size = new Size(691, 463);
+            Load += Vault_Load;
+            Paint += Vault_Paint;
             vaultBox.ResumeLayout(false);
             vaultBox.PerformLayout();
             ((ISupportInitialize)VaultPicturebox).EndInit();

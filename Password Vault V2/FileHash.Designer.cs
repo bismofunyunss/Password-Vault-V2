@@ -54,9 +54,9 @@ namespace Password_Vault_V2
             hashbox.Controls.Add(HashImportFile);
             hashbox.Font = new Font("Century Gothic", 11F, FontStyle.Regular, GraphicsUnit.Point, 0);
             hashbox.ForeColor = Color.WhiteSmoke;
-            hashbox.Location = new Point(39, 73);
+            hashbox.Location = new Point(47, 74);
             hashbox.Name = "hashbox";
-            hashbox.Size = new Size(930, 358);
+            hashbox.Size = new Size(930, 374);
             hashbox.TabIndex = 12;
             hashbox.TabStop = false;
             hashbox.Text = "File Hash Calculator";
@@ -148,12 +148,14 @@ namespace Password_Vault_V2
             // 
             // FileHash
             // 
-            AutoScaleDimensions = new SizeF(10F, 25F);
-            AutoScaleMode = AutoScaleMode.Font;
+            AutoScaleDimensions = new SizeF(144F, 144F);
+            AutoScaleMode = AutoScaleMode.Dpi;
             BackColor = Color.FromArgb(30, 30, 30);
             Controls.Add(hashbox);
+            DoubleBuffered = true;
             Name = "FileHash";
-            Size = new Size(1008, 554);
+            Size = new Size(997, 451);
+            Paint += FileHash_Paint;
             hashbox.ResumeLayout(false);
             hashbox.PerformLayout();
             ((ISupportInitialize)pictureBox1).EndInit();
@@ -161,8 +163,6 @@ namespace Password_Vault_V2
         }
 
         #endregion
-
-        private GroupBox hashbox;
         private Label filenamelbl;
         private Button CalculateHashBtn;
         private Label hashoutputlbl;
@@ -170,5 +170,6 @@ namespace Password_Vault_V2
         private Button HashImportFile;
         public Label WelcomeLabel;
         private PictureBox pictureBox1;
+        public GroupBox hashbox;
     }
 }

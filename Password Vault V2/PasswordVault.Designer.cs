@@ -66,7 +66,7 @@ namespace Password_Vault_V2
             SidePanelMenu.Dock = DockStyle.Left;
             SidePanelMenu.Location = new Point(0, 0);
             SidePanelMenu.Name = "SidePanelMenu";
-            SidePanelMenu.Size = new Size(206, 514);
+            SidePanelMenu.Size = new Size(206, 529);
             SidePanelMenu.TabIndex = 0;
             // 
             // CryptoSettingsBtn
@@ -92,7 +92,7 @@ namespace Password_Vault_V2
             SeparatePanel.BackColor = Color.Cyan;
             SeparatePanel.Location = new Point(198, 0);
             SeparatePanel.Name = "SeparatePanel";
-            SeparatePanel.Size = new Size(8, 514);
+            SeparatePanel.Size = new Size(8, 529);
             SeparatePanel.TabIndex = 11;
             // 
             // LoginPanel
@@ -209,7 +209,7 @@ namespace Password_Vault_V2
             TopPanelBar.Dock = DockStyle.Top;
             TopPanelBar.Location = new Point(206, 0);
             TopPanelBar.Name = "TopPanelBar";
-            TopPanelBar.Size = new Size(643, 53);
+            TopPanelBar.Size = new Size(645, 65);
             TopPanelBar.TabIndex = 11;
             TopPanelBar.MouseDown += TopPanelBar_MouseDown;
             TopPanelBar.MouseMove += TopPanelBar_MouseMove;
@@ -231,9 +231,9 @@ namespace Password_Vault_V2
             MinimizeIcon.BackColor = Color.FromArgb(30, 30, 30);
             MinimizeIcon.Dock = DockStyle.Right;
             MinimizeIcon.Image = (Image)resources.GetObject("MinimizeIcon.Image");
-            MinimizeIcon.Location = new Point(539, 0);
+            MinimizeIcon.Location = new Point(541, 0);
             MinimizeIcon.Name = "MinimizeIcon";
-            MinimizeIcon.Size = new Size(52, 53);
+            MinimizeIcon.Size = new Size(52, 65);
             MinimizeIcon.SizeMode = PictureBoxSizeMode.Zoom;
             MinimizeIcon.TabIndex = 3;
             MinimizeIcon.TabStop = false;
@@ -246,9 +246,9 @@ namespace Password_Vault_V2
             ShutdownIcon.BackColor = Color.FromArgb(30, 30, 30);
             ShutdownIcon.Dock = DockStyle.Right;
             ShutdownIcon.Image = (Image)resources.GetObject("ShutdownIcon.Image");
-            ShutdownIcon.Location = new Point(591, 0);
+            ShutdownIcon.Location = new Point(593, 0);
             ShutdownIcon.Name = "ShutdownIcon";
-            ShutdownIcon.Size = new Size(52, 53);
+            ShutdownIcon.Size = new Size(52, 65);
             ShutdownIcon.SizeMode = PictureBoxSizeMode.Zoom;
             ShutdownIcon.TabIndex = 4;
             ShutdownIcon.TabStop = false;
@@ -301,6 +301,7 @@ namespace Password_Vault_V2
             BtnLogin.BackColor = Color.FromArgb(30, 30, 30);
             BtnLogin.FlatStyle = FlatStyle.Flat;
             BtnLogin.Font = new Font("Century Gothic", 11F, FontStyle.Regular, GraphicsUnit.Point, 0);
+            BtnLogin.ForeColor = Color.White;
             BtnLogin.Image = Properties.Resources.enter;
             BtnLogin.ImageAlign = ContentAlignment.MiddleLeft;
             BtnLogin.Location = new Point(80, 166);
@@ -310,6 +311,7 @@ namespace Password_Vault_V2
             BtnLogin.Text = "&Login";
             BtnLogin.UseVisualStyleBackColor = false;
             BtnLogin.Click += BtnLogin_Click;
+            BtnLogin.Paint += BtnLogin_Paint;
             // 
             // UsernameLabel
             // 
@@ -374,6 +376,7 @@ namespace Password_Vault_V2
             // 
             // LoginGroupBox
             // 
+            LoginGroupBox.Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right;
             LoginGroupBox.BackColor = Color.FromArgb(30, 30, 30);
             LoginGroupBox.Controls.Add(PasswordTxt);
             LoginGroupBox.Controls.Add(LogoutBtn);
@@ -391,9 +394,9 @@ namespace Password_Vault_V2
             LoginGroupBox.Controls.Add(pictureBox1);
             LoginGroupBox.Font = new Font("Century Gothic", 11F, FontStyle.Regular, GraphicsUnit.Point, 0);
             LoginGroupBox.ForeColor = Color.White;
-            LoginGroupBox.Location = new Point(221, 59);
+            LoginGroupBox.Location = new Point(212, 59);
             LoginGroupBox.Name = "LoginGroupBox";
-            LoginGroupBox.Size = new Size(611, 443);
+            LoginGroupBox.Size = new Size(622, 458);
             LoginGroupBox.TabIndex = 6;
             LoginGroupBox.TabStop = false;
             LoginGroupBox.Text = "Login";
@@ -414,6 +417,7 @@ namespace Password_Vault_V2
             LogoutBtn.BackColor = Color.FromArgb(30, 30, 30);
             LogoutBtn.FlatStyle = FlatStyle.Flat;
             LogoutBtn.Font = new Font("Century Gothic", 11F, FontStyle.Regular, GraphicsUnit.Point, 0);
+            LogoutBtn.ForeColor = Color.White;
             LogoutBtn.Image = (Image)resources.GetObject("LogoutBtn.Image");
             LogoutBtn.ImageAlign = ContentAlignment.MiddleLeft;
             LogoutBtn.Location = new Point(80, 212);
@@ -438,10 +442,10 @@ namespace Password_Vault_V2
             // PasswordVault
             // 
             AcceptButton = BtnLogin;
-            AutoScaleDimensions = new SizeF(10F, 25F);
-            AutoScaleMode = AutoScaleMode.Font;
+            AutoScaleDimensions = new SizeF(144F, 144F);
+            AutoScaleMode = AutoScaleMode.Dpi;
             BackColor = Color.FromArgb(30, 30, 30);
-            ClientSize = new Size(849, 514);
+            ClientSize = new Size(851, 529);
             ControlBox = false;
             Controls.Add(LoginGroupBox);
             Controls.Add(TopPanelBar);
@@ -451,7 +455,9 @@ namespace Password_Vault_V2
             Name = "PasswordVault";
             StartPosition = FormStartPosition.CenterScreen;
             Text = "Password Vault";
+            FormClosing += PasswordVault_FormClosing;
             Load += PasswordVault_Load;
+            Paint += PasswordVault_Paint;
             MouseDown += PasswordVault_MouseDown;
             MouseMove += PasswordVault_MouseMove;
             MouseUp += PasswordVault_MouseUp;
@@ -498,5 +504,6 @@ namespace Password_Vault_V2
         private Panel SeparatePanel;
         private TextBox PasswordTxt;
         private Button CryptoSettingsBtn;
+        //private Panel ContentPanel;
     }
 }

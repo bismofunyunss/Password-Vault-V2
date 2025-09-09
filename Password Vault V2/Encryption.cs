@@ -2,6 +2,9 @@
 using System.Security.Cryptography;
 using System.Text;
 using static Password_Vault_V2.Crypto;
+using static Password_Vault_V2.Crypto.ParallelCtrEncryptor;
+using static Password_Vault_V2.UiController;
+using Timer = System.Windows.Forms.Timer;
 
 namespace Password_Vault_V2;
 
@@ -9,7 +12,6 @@ public partial class Encryption : UserControl
 {
     private static CancellationTokenSource _encryptAnimationSource = new();
     private static CancellationTokenSource _decryptAnimationSource = new();
-    private static readonly byte[] MasterKey = Crypto.MasterKey.GetKey();
 
     public Encryption()
     {
@@ -18,12 +20,27 @@ public partial class Encryption : UserControl
 
     private async void DecryptingAnimation()
     {
-        await UiController.Animations.AnimateLabel(FileOutputLbl, "Decrypting file", _decryptAnimationSource.Token);
+        await Animations.AnimateLabel(FileOutputLbl, "Decrypting file", _decryptAnimationSource.Token);
     }
 
     private async void EncryptingAnimation()
     {
-        await UiController.Animations.AnimateLabel(FileOutputLbl, "Encrypting file", _encryptAnimationSource.Token);
+        await Animations.AnimateLabel(FileOutputLbl, "Encrypting file", _encryptAnimationSource.Token);
+    }
+
+    public static string FormatFileSize(long bytes)
+    {
+        string[] sizes = { "bytes", "KB", "MB", "GB", "TB", "PB" };
+        double len = bytes;
+        var order = 0;
+
+        while (len >= 1024 && order < sizes.Length - 1)
+        {
+            order++;
+            len /= 1024;
+        }
+
+        return $"{len:0.##} {sizes[order]}";
     }
 
     private async void ImportFileBtn_Click(object sender, EventArgs e)
@@ -51,26 +68,22 @@ public partial class Encryption : UserControl
             var selectedFileName = openFileDialog.FileName;
             var fileInfo = new FileInfo(selectedFileName);
 
-            if (fileInfo.Length > FileProcessingConstants.MaximumFileSize)
-                throw new Exception("File size exceeds the maximum allowed limit.");
-
-            FileProcessingConstants.FileOpened = true;
-            FileProcessingConstants.LoadedFile = selectedFileName;
-            FileProcessingConstants.Result = await IO.ReadFile(selectedFileName) ??
-                                             throw new InvalidOperationException("Unable to read file.");
+            FileVars.FileOpened = true;
+            FileVars.LoadedFile = selectedFileName;
+            FileVars.Result = IO.OpenFileStream(selectedFileName);
 
             // Validate that the file has been read correctly
-            if (FileProcessingConstants.Result.Length == 0)
-                throw new Exception("The file is empty or cannot be read.");
+            if (FileVars.Result.Length == 0)
+                throw new Exception("The file is empty.");
 
-            FileProcessingConstants.FileExtension = fileInfo.Extension.ToLower(CultureInfo.CurrentCulture);
-            FileProcessingConstants.FileSize = (int)fileInfo.Length;
+            FileVars.FileExtension = fileInfo.Extension.ToLower(CultureInfo.CurrentCulture);
+            FileVars.FileSize = fileInfo.Length;
 
-            FileSizeNumLbl.Text = $"{fileInfo.Length:#,0} bytes";
+            FileSizeNumLbl.Text = FormatFileSize(FileVars.FileSize);
             FileOutputLbl.Text = "File opened.";
             FileOutputLbl.ForeColor = Color.LimeGreen;
-            FileProcessingConstants.IsDecrypted = false;
-            FileProcessingConstants.IsEncrypted = false;
+            FileVars.IsDecrypted = false;
+            FileVars.IsEncrypted = false;
 
             MessageBox.Show("File opened successfully.", "Opened successfully", MessageBoxButtons.OK,
                 MessageBoxIcon.Information);
@@ -93,7 +106,6 @@ public partial class Encryption : UserControl
         }
     }
 
-
     private async void ExportFileBtn_Click(object sender, EventArgs e)
     {
         try
@@ -101,7 +113,7 @@ public partial class Encryption : UserControl
             if (string.IsNullOrEmpty(UserFileManager.CurrentLoggedInUser))
                 throw new InvalidOperationException("No user is currently logged in.");
 
-            if (!FileProcessingConstants.FileOpened)
+            if (!FileVars.FileOpened)
                 throw new InvalidOperationException("No file is opened.");
 
             using var saveFileDialog = new SaveFileDialog();
@@ -110,7 +122,7 @@ public partial class Encryption : UserControl
             string? extension;
             string filter;
 
-            if (FileProcessingConstants.IsEncrypted)
+            if (FileVars.IsEncrypted)
             {
                 extension = ".encrypted";
                 filter = "Encrypted files (*.encrypted)|*.encrypted";
@@ -118,12 +130,16 @@ public partial class Encryption : UserControl
             else
             {
                 // Use original extension from decrypted metadata if available
-                extension = FileProcessingConstants.OriginalExtension;
-                if (!string.IsNullOrWhiteSpace(extension) && extension.StartsWith("."))
-                    extension = $".{FileProcessingConstants.FileExtension}";
-
-                var extNoDot = extension!.TrimStart('.');
-                filter = $"{extNoDot.ToUpper()} files (*{extension})|*{extension}|All Files (*.*)|*.*";
+                extension = FileVars.OriginalExtension;
+                if (string.IsNullOrEmpty(extension))
+                {
+                    filter = "All Files (*.*)|*.*";
+                }
+                else
+                {
+                    var extNoDot = extension.TrimStart('.');
+                    filter = $"{extNoDot.ToUpper()} files (*{extension})|*{extension}|All Files (*.*)|*.*";
+                }
             }
 
             saveFileDialog.Filter = filter;
@@ -146,230 +162,334 @@ public partial class Encryption : UserControl
             else if (!selectedFileName.EndsWith(extension, StringComparison.OrdinalIgnoreCase))
                 selectedFileName = Path.ChangeExtension(selectedFileName, extension);
 
-            if (FileProcessingConstants.Result.Length == 0)
+            if (FileVars.Result?.Length == 0)
                 throw new InvalidOperationException("There is no data to write to the file.");
 
-            await IO.WriteFile(selectedFileName, FileProcessingConstants.Result);
+            FileVars.Result.Position = 0;
+            await IO.WriteFileStreamAsync(selectedFileName, FileVars.Result).ConfigureAwait(false);
+            await IO.SecurelyWipeFileAsync(FileVars.LoadedFile);
 
-            FileOutputLbl.Text = "File saved successfully.";
-            FileOutputLbl.ForeColor = Color.LimeGreen;
+            UIThreadHelper.SafeInvoke(FileOutputLbl, () =>
+            {
+                FileOutputLbl.Text = "File saved successfully.";
+                FileOutputLbl.ForeColor = Color.LimeGreen;
+            });
 
-            MessageBox.Show("File saved successfully.", "Saved successfully", MessageBoxButtons.OK,
-                MessageBoxIcon.Information);
+            UIThreadHelper.SafeInvoke(this,
+                () =>
+                {
+                    MessageBox.Show(this, "File saved successfully.", "Saved successfully", MessageBoxButtons.OK,
+                        MessageBoxIcon.Information);
+                });
 
             // Cleanup state
-            FileProcessingConstants.FileOpened = false;
-            FileProcessingConstants.Result = [];
-            FileSizeNumLbl.Text = "0 bytes";
-            FileProcessingConstants.IsDecrypted = false;
-            FileProcessingConstants.IsEncrypted = false;
+            FileVars.FileOpened = false;
+            FileVars.Result?.Dispose();
+
+            UIThreadHelper.SafeInvoke(FileSizeNumLbl,
+                () => { FileSizeNumLbl.Text = FormatFileSize(FileVars.FileSize); });
+
+            FileVars.Result = null;
+            FileVars.FileSize = 0;
+            FileVars.IsDecrypted = false;
+            FileVars.IsEncrypted = false;
         }
         catch (Exception ex)
         {
-            MessageBox.Show(ex.Message, "Error", MessageBoxButtons.OK,
-                MessageBoxIcon.Error);
+            UIThreadHelper.SafeInvoke(this,
+                () => { MessageBox.Show(this, ex.Message, "Error", MessageBoxButtons.OK, MessageBoxIcon.Error); });
             ErrorLogging.ErrorLog(ex);
         }
         finally
         {
-            FileOutputLbl.Text = "Idle...";
-            FileOutputLbl.ForeColor = Color.WhiteSmoke;
+            UIThreadHelper.SafeInvoke(FileOutputLbl, () =>
+            {
+                FileOutputLbl.Text = "Idle...";
+                FileOutputLbl.ForeColor = Color.WhiteSmoke;
+            });
         }
     }
 
-    /// <summary>
-    /// Handles the decryption of an encrypted file when the Decrypt button is clicked.
-    /// </summary>
-    /// <param name="sender">The source of the event (Decrypt button).</param>
-    /// <param name="e">Event data associated with the button click.</param>
-    /// <remarks>
-    /// Performs several validations before decrypting the file, including checking whether a file is loaded, 
-    /// whether it has already been decrypted, and whether a user is logged in.
-    /// 
-    /// If decryption is successful, updates the UI and internal flags accordingly. 
-    /// Displays informative message boxes to guide the user. 
-    /// Logs errors with full exception details for debugging.
-    /// </remarks>
-    /// <exception cref="InvalidOperationException">
-    /// Thrown when no user is logged in, no file is opened, or the file has already been decrypted.
-    /// </exception>
-    /// <exception cref="FileNotFoundException">
-    /// Thrown when the file path is null or empty.
-    /// </exception>
-    /// <exception cref="CryptographicException">
-    /// Thrown when decryption fails due to cryptographic issues, such as an incorrect password.
-    /// </exception>
-    /// <exception cref="Exception">
-    /// Thrown when the encrypted file is corrupted or metadata is missing.
-    /// </exception>
+
+    private async Task<bool> PerformDecryptionAsync(IProgress<double> uiProgress)
+    {
+        if (string.IsNullOrEmpty(UserFileManager.CurrentLoggedInUser))
+            throw new InvalidOperationException("No user is currently logged in.");
+
+        if (!FileVars.FileOpened || string.IsNullOrEmpty(FileVars.LoadedFile))
+            throw new InvalidOperationException("No valid file selected for decryption.");
+
+        if (FileVars.IsDecrypted)
+            throw new InvalidOperationException("File already decrypted. Re-encrypt or export to proceed.");
+
+        var input = FileVars.Result ?? throw new InvalidOperationException("No input stream.");
+        input.Position = 0;
+
+        // Parse header
+        var sigLen = CryptoConstants.FileSignature.Length;
+        var saltLen = CryptoConstants.SaltSize;
+        var headerLen = sigLen + saltLen + 1;
+
+        var header = new byte[headerLen];
+        var headerRead = await input.ReadAsync(header, 0, headerLen).ConfigureAwait(false);
+        if (headerRead != headerLen)
+            throw new InvalidDataException("Failed to read full header.");
+
+        for (var i = 0; i < sigLen; i++)
+            if (header[i] != CryptoConstants.FileSignature[i])
+                throw new InvalidDataException("File signature mismatch.");
+
+        var salt = new byte[saltLen];
+        Buffer.BlockCopy(header, sigLen, salt, 0, saltLen);
+
+        var extLength = header[^1];
+        var extBuffer = new byte[extLength];
+        var extRead = await input.ReadAsync(extBuffer, 0, extLength).ConfigureAwait(false);
+        if (extRead != extLength)
+            throw new InvalidDataException("Failed to read extension.");
+
+        FileVars.OriginalExtension = Encoding.UTF8.GetString(extBuffer);
+        long encryptedOffset = headerLen + extLength;
+        input.Position = encryptedOffset;
+
+        if (encryptedOffset >= input.Length)
+            throw new InvalidDataException("No encrypted data found after header.");
+
+        var tempDecryptedPath = Path.GetTempFileName();
+
+        var masterKey = MasterKey.GetKey();
+        var fileKey = Crypto.HKDF.HkdfDerivePinned(masterKey, salt, "file key"u8.ToArray(), CryptoConstants.KeySize);
+
+        try
+        {
+            await using (var output =
+                         new FileStream(tempDecryptedPath, FileMode.Create, FileAccess.Write, FileShare.None))
+            {
+                await DecryptFile(input, output, fileKey, salt,
+                    uiProgress).ConfigureAwait(false);
+                await output.FlushAsync().ConfigureAwait(false);
+            }
+
+            FileVars.Result?.Dispose();
+            FileVars.Result = new FileStream(tempDecryptedPath, FileMode.Open, FileAccess.ReadWrite, FileShare.None);
+            FileVars.Result.Position = 0;
+
+            return true;
+        }
+        finally
+        {
+            CryptoUtilities.ClearMemoryNative(fileKey, salt);
+        }
+    }
+
+
+    private static async Task<bool> PerformEncryptionAsync(
+        IProgress<double> progress)
+    {
+        if (string.IsNullOrEmpty(UserFileManager.CurrentLoggedInUser))
+            throw new InvalidOperationException("No user is currently logged in.");
+
+        if (!FileVars.FileOpened)
+            throw new InvalidOperationException("No file is opened. Please open a file before encrypting.");
+
+        if (string.IsNullOrEmpty(FileVars.LoadedFile))
+            throw new FileNotFoundException("No file is selected or the file path is empty.");
+
+        if (FileVars.IsEncrypted)
+            throw new InvalidOperationException("File is already encrypted. Please decrypt or export it first.");
+
+        var inputStream = FileVars.Result ?? throw new InvalidOperationException("No input stream.");
+
+        inputStream.Position = 0;
+
+        if (inputStream.Length >= CryptoConstants.FileSignature.Length)
+        {
+            var header = new byte[CryptoConstants.FileSignature.Length];
+            var bytesRead = await inputStream.ReadAsync(header, 0, header.Length).ConfigureAwait(false);
+
+            if (bytesRead != header.Length)
+                throw new IOException("Failed to read the full file header.");
+
+            if (header.SequenceEqual(CryptoConstants.FileSignature))
+                throw new Exception("File is already encrypted. Unable to encrypt again. Please export the file.");
+
+            inputStream.Position = 0; // Reset after peek
+        }
+
+        var salt = CryptoUtilities.RndByteSized(CryptoConstants.SaltSize);
+        var masterKey = MasterKey.GetKey();
+        var fileKey = Crypto.HKDF.HkdfDerivePinned(masterKey, salt, "file key"u8.ToArray(), CryptoConstants.KeySize);
+
+        try
+        {
+            var tempEncryptedPath = Path.GetTempFileName();
+
+            await using var tempEncryptedStream = new FileStream(
+                tempEncryptedPath,
+                FileMode.Create,
+                FileAccess.ReadWrite,
+                FileShare.None,
+                4096,
+                FileOptions.DeleteOnClose);
+
+            await EncryptFile(
+                inputStream,
+                tempEncryptedStream,
+                fileKey,
+                salt, progress
+            ).ConfigureAwait(false);
+
+            await tempEncryptedStream.FlushAsync().ConfigureAwait(false);
+            tempEncryptedStream.Position = 0;
+
+            var finalTempPath = Path.GetTempFileName();
+
+            await using (var finalStream = new FileStream(
+                             finalTempPath,
+                             FileMode.Create,
+                             FileAccess.ReadWrite,
+                             FileShare.None,
+                             4096))
+            {
+                var ext = Path.GetExtension(FileVars.LoadedFile) ?? string.Empty;
+                var extBytes = Encoding.UTF8.GetBytes(ext);
+                var extLength = (byte)extBytes.Length;
+
+                await finalStream.WriteAsync(CryptoConstants.FileSignature).ConfigureAwait(false);
+                await finalStream.WriteAsync(salt).ConfigureAwait(false);
+                await finalStream.WriteAsync(new[] { extLength }, 0, 1).ConfigureAwait(false);
+                await finalStream.WriteAsync(extBytes).ConfigureAwait(false);
+
+                await tempEncryptedStream.CopyToAsync(finalStream).ConfigureAwait(false);
+                await finalStream.FlushAsync().ConfigureAwait(false);
+                finalStream.Position = 0;
+            }
+
+            FileVars.Result?.Dispose();
+
+            FileVars.Result = new FileStream(
+                finalTempPath,
+                FileMode.Open,
+                FileAccess.Read,
+                FileShare.None,
+                4096,
+                FileOptions.DeleteOnClose);
+
+            FileVars.Result.Position = 0;
+        }
+        finally
+        {
+            CryptoUtilities.ClearMemoryNative(fileKey, salt);
+        }
+
+        return true;
+    }
+
+
     private async void DecryptBtn_Click(object sender, EventArgs e)
     {
         try
         {
-            if (string.IsNullOrEmpty(UserFileManager.CurrentLoggedInUser))
-                throw new InvalidOperationException("No user is currently logged in.");
+            UIThreadHelper.SafeInvoke(this, () =>
+            {
+                MessageBox.Show(
+                    "Do NOT close the program while loading. This may cause corrupted data that is NOT recoverable.\n" +
+                    "If using a custom password to decrypt, you MUST enter the same password used during encryption.",
+                    "Info", MessageBoxButtons.OK, MessageBoxIcon.Exclamation);
 
-            MessageBox.Show(
-                "Do NOT close the program while loading. This may cause corrupted data that is NOT recoverable. " +
-                "If using a custom password to decrypt, you MUST enter the same password used during encryption.",
-                "Info", MessageBoxButtons.OK, MessageBoxIcon.Exclamation);
+                progressBar.Minimum = 0;
+                progressBar.Maximum = 100;
+                progressBar.Value = 0;
+                DecryptBtn.Enabled = false;
+                DecryptingAnimation();
+            });
 
-            DecryptBtn.Enabled = false;
+            var currentValue = 0;
+            var targetValue = 0;
+            var timer = new Timer
+            {
+                Interval = 15
+            };
 
-            if (!FileProcessingConstants.FileOpened)
-                throw new InvalidOperationException("No file is currently opened. Please open a file first.");
+            timer.Tick += (s, e) =>
+            {
+                if (currentValue < targetValue)
+                    currentValue++;
+                else if (currentValue > targetValue)
+                    currentValue--;
 
-            if (string.IsNullOrEmpty(FileProcessingConstants.LoadedFile))
-                throw new FileNotFoundException("No file is selected or the selected file path is empty.");
+                progressBar.Value = currentValue;
 
-            if (FileProcessingConstants.IsDecrypted)
-                throw new InvalidOperationException(
-                    "The file has already been decrypted. You cannot decrypt it again. Please either encrypt or export it.");
+                if (currentValue == targetValue)
+                    timer.Stop();
+            };
 
-            DecryptingAnimation();
+            var uiProgress = new Progress<double>(percent =>
+            {
+                var newTarget = (int)Math.Round(percent);
+                newTarget = Math.Max(progressBar.Minimum, Math.Min(progressBar.Maximum, newTarget));
 
-            var data = FileProcessingConstants.Result;
-            var signature = CryptoConstants.FileSignature;
-            var saltSize = CryptoConstants.SaltSize;
-            var headerLength = signature.Length + saltSize + 1; // signature + salt + extension length byte
+                if (newTarget != targetValue)
+                {
+                    targetValue = newTarget;
+                    if (!timer.Enabled)
+                        timer.Start();
+                }
+            });
 
-            if (data.Length < headerLength)
-                throw new Exception("Encrypted file is corrupted or missing required metadata.");
 
-            // Validate file signature
-            var actualSignature = data.AsSpan(0, signature.Length);
-            if (!actualSignature.SequenceEqual(signature))
-                throw new Exception("Invalid file signature. This file may not be a valid encrypted file.");
+            var success = await PerformDecryptionAsync(uiProgress).ConfigureAwait(false);
 
-            // Extract HKDF salt for file key derivation
-            var saltStart = signature.Length;
-            var fileHkdfSalt = data.AsSpan(saltStart, saltSize).ToArray();
-
-            // Read extension length
-            var extLenIndex = saltStart + saltSize;
-            var extensionLength = data[extLenIndex];
-
-            // Ensure there's enough data for extension bytes
-            if (data.Length < extLenIndex + 1 + extensionLength)
-                throw new Exception("File is missing extension metadata or is corrupted.");
-
-            var extBytesIndex = extLenIndex + 1;
-            var extensionBytes = data.AsSpan(extBytesIndex, extensionLength).ToArray();
-            var originalExtension = Encoding.UTF8.GetString(extensionBytes);
-            FileProcessingConstants.OriginalExtension = originalExtension;
-
-            // Extract encrypted content
-            var encryptedStart = extBytesIndex + extensionLength;
-            var encryptedContent = data.AsSpan(encryptedStart).ToArray();
-
-            // Derive the file key using MasterKey + extracted salt
-            var fileKey = Crypto.HKDF.HkdfDerivePinned(MasterKey, fileHkdfSalt, "file key"u8.ToArray(),
-                CryptoConstants.KeySize);
-
-            // Decrypt using the derived file key
-            var decryptedFile = await DecryptFile(encryptedContent, fileKey, fileHkdfSalt);
-
-            await Task.Delay(3000, _decryptAnimationSource.Token);
             await ResetDecryptAnimationTokenAsync();
 
-            if (decryptedFile.Length == 0)
-                throw new Exception("Decryption failed: resulting file is empty or corrupted.");
+            if (success)
+            {
+                await Task.Delay(2500);
+                await ResetDecryptAnimationTokenAsync();
 
-            FileProcessingConstants.Result = decryptedFile;
+                UIThreadHelper.SafeInvoke(this, () =>
+                {
+                    FileOutputLbl.Text = "File decrypted.";
+                    FileOutputLbl.ForeColor = Color.LimeGreen;
 
-            FileOutputLbl.Text = "File decrypted.";
-            FileOutputLbl.ForeColor = Color.LimeGreen;
+                    MessageBox.Show(
+                        "File was decrypted successfully. Don't forget to export and restore its original extension.",
+                        "Success", MessageBoxButtons.OK, MessageBoxIcon.Information);
 
-            MessageBox.Show(
-                "File was decrypted successfully. Don't forget to export and restore its original extension.",
-                "Success", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                    FileSizeNumLbl.Text = FormatFileSize(FileVars.FileSize);
+                    FileOutputLbl.Text = "Idle...";
+                    FileOutputLbl.ForeColor = Color.WhiteSmoke;
 
-            GC.Collect(GC.MaxGeneration, GCCollectionMode.Aggressive, true, true);
-
-            FileSizeNumLbl.Text = $"{FileProcessingConstants.Result.Length:#,0} bytes";
-            FileOutputLbl.Text = "Idle...";
-            FileOutputLbl.ForeColor = Color.WhiteSmoke;
-
-            FileProcessingConstants.IsEncrypted = false;
-            FileProcessingConstants.IsDecrypted = true;
-
-            // Clear sensitive memory
-            CryptoUtilities.ClearMemoryNative(fileKey, fileHkdfSalt);
-        }
-        catch (OperationCanceledException)
-        {
-            // Ignored
-        }
-        catch (CryptographicException ex)
-        {
-            await ResetDecryptAnimationTokenAsync();
-
-            FileOutputLbl.Text = "Error decrypting file.";
-            FileOutputLbl.ForeColor = Color.Red;
-
-            MessageBox.Show("Unable to load vault. Recheck your password and vault file.", "Error",
-                MessageBoxButtons.OK, MessageBoxIcon.Error);
-
-            FileOutputLbl.Text = "Idle...";
-            FileOutputLbl.ForeColor = Color.WhiteSmoke;
-
-            FileProcessingConstants.IsDecrypted = false;
-            ErrorLogging.ErrorLog(ex);
-        }
-        catch (FileNotFoundException ex)
-        {
-            await ResetDecryptAnimationTokenAsync();
-
-            FileOutputLbl.Text = "Error decrypting file.";
-            FileOutputLbl.ForeColor = Color.Red;
-
-            MessageBox.Show("No file is selected. Or the file path was empty.", "Error", MessageBoxButtons.OK,
-                MessageBoxIcon.Error);
-
-            FileOutputLbl.Text = "Idle...";
-            FileOutputLbl.ForeColor = Color.WhiteSmoke;
-
-            FileProcessingConstants.IsDecrypted = false;
-            ErrorLogging.ErrorLog(ex);
-        }
-        catch (InvalidOperationException ex)
-        {
-            await ResetDecryptAnimationTokenAsync();
-
-            FileOutputLbl.Text = "Error decrypting file.";
-            FileOutputLbl.ForeColor = Color.Red;
-
-            MessageBox.Show(
-                "An invalid operation error has occured. Make sure you have a file opened, and that it hasn't already been decrypted.",
-                "Error", MessageBoxButtons.OK,
-                MessageBoxIcon.Error);
-
-            FileOutputLbl.Text = "Idle...";
-            FileOutputLbl.ForeColor = Color.WhiteSmoke;
-
-            FileProcessingConstants.IsDecrypted = false;
-            ErrorLogging.ErrorLog(ex);
+                    FileVars.IsEncrypted = false;
+                    FileVars.IsDecrypted = true;
+                });
+            }
         }
         catch (Exception ex)
         {
             await ResetDecryptAnimationTokenAsync();
 
-            FileOutputLbl.Text = "Error decrypting file.";
-            FileOutputLbl.ForeColor = Color.Red;
+            UIThreadHelper.SafeInvoke(this, () =>
+            {
+                FileOutputLbl.Text = "Error decrypting file.";
+                FileOutputLbl.ForeColor = Color.Red;
 
-            MessageBox.Show("An unexpected error has occured.", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                MessageBox.Show($"Error: {ex.Message}", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
 
-            FileOutputLbl.Text = "Idle...";
-            FileOutputLbl.ForeColor = Color.WhiteSmoke;
+                FileOutputLbl.Text = "Idle...";
+                FileOutputLbl.ForeColor = Color.WhiteSmoke;
+                progressBar.Value = 0;
+                FileVars.IsDecrypted = false;
+            });
 
-            FileProcessingConstants.IsDecrypted = false;
             ErrorLogging.ErrorLog(ex);
         }
         finally
         {
-            DecryptBtn.Enabled = true;
+            UIThreadHelper.SafeInvoke(this, () => DecryptBtn.Enabled = true);
         }
     }
+
 
     private static async Task ResetDecryptAnimationTokenAsync()
     {
@@ -391,225 +511,140 @@ public partial class Encryption : UserControl
         }
     }
 
-    /// <summary>
-    /// Checks the header of a file to determine if it has already been encrypted.
-    /// </summary>
-    /// <param name="file">The full path to the file to check.</param>
-    /// <returns>A task that represents the asynchronous operation.</returns>
-    /// <remarks>
-    /// This method opens the specified file and reads its initial bytes to compare them against the expected file signature.
-    /// If the signature matches, it indicates the file has already been encrypted, and an <see cref="Exception"/> is thrown.
-    /// </remarks>
-    /// <exception cref="IOException">
-    /// Thrown if the method fails to read the full header from the file.
-    /// </exception>
-    /// <exception cref="Exception">
-    /// Thrown if the file appears to already be encrypted based on the signature.
-    /// </exception>
-    /// <example>
-    /// <code>
-    /// try
-    /// {
-    ///     await CheckHeader("C:\\path\\to\\file.dat");
-    /// }
-    /// catch (Exception ex)
-    /// {
-    ///     MessageBox.Show(ex.Message);
-    /// }
-    /// </code>
-    /// </example>
-
-    private static async void CheckHeader(string file)
-    {
-        await using var fs = new FileStream(file, FileMode.Open, FileAccess.Read, FileShare.Read);
-        if (fs.Length >= CryptoConstants.FileSignature.Length)
-        {
-            var header = new byte[CryptoConstants.FileSignature.Length];
-            var bytesRead = await fs.ReadAsync(header);
-
-            if (bytesRead != header.Length)
-                throw new IOException("Failed to read the full file header.");
-
-            if (header.SequenceEqual(CryptoConstants.FileSignature))
-                throw new Exception("File is already encrypted. Unable to encrypt again. Please export the file.");
-        }
-    }
-
-    /// <summary>
-    /// Handles the click event for the Encrypt button and performs encryption on the currently loaded file.
-    /// </summary>
-    /// <param name="sender">The source of the event, typically the Encrypt button.</param>
-    /// <param name="e">The event data associated with the button click.</param>
-    /// <remarks>
-    /// This method validates that a user is logged in and a file is selected, then performs file encryption using 
-    /// a derived key and a random salt. It embeds metadata such as the original file extension into the encrypted output.
-    /// 
-    /// On success, it updates the UI with a success message and sets encryption state flags. On failure, it provides 
-    /// user-friendly error messages depending on the specific exception caught. Sensitive data is cleared from memory
-    /// and the UI is reset regardless of success or failure.
-    /// </remarks>
-    /// <exception cref="InvalidOperationException">
-    /// Thrown when no user is logged in, no file is opened, or the file has already been encrypted.
-    /// </exception>
-    /// <exception cref="FileNotFoundException">
-    /// Thrown when the selected file path is null, empty, or the file cannot be found.
-    /// </exception>
-    /// <exception cref="CryptographicException">
-    /// Thrown when a cryptographic error occurs during key derivation or encryption.
-    /// </exception>
-    /// <exception cref="CryptographicOperationException">
-    /// Thrown when encryption fails or the output is invalid.
-    /// </exception>
-    /// <exception cref="Exception">
-    /// Thrown when an unexpected error occurs during the encryption process.
-    /// </exception>
-
     private async void EncryptBtn_Click(object sender, EventArgs e)
     {
-        byte[] fileKey = [];
-        byte[] fileHkdfSalt = [];
-
         try
         {
-            if (string.IsNullOrEmpty(UserFileManager.CurrentLoggedInUser))
-                throw new InvalidOperationException("No user is currently logged in.");
-
-            MessageBox.Show(
-                "Do NOT close the program while loading. This may cause corrupted data that is NOT recoverable.\n\n" +
-                "If using a custom password to encrypt with, MAKE SURE YOU REMEMBER THE PASSWORD!\n" +
-                "You will NOT be able to decrypt the file without it. It is separate from your login password.",
-                "Warning", MessageBoxButtons.OK, MessageBoxIcon.Exclamation);
-
-            EncryptBtn.Enabled = false;
-
-            if (!FileProcessingConstants.FileOpened)
-                throw new InvalidOperationException("No file is opened. Please open a file before encrypting.");
-
-            if (string.IsNullOrEmpty(FileProcessingConstants.LoadedFile))
-                throw new FileNotFoundException("No file is selected or the file path is empty.");
-
-            if (FileProcessingConstants.IsEncrypted)
-                throw new InvalidOperationException("File is already encrypted. Please decrypt or export it first.");
-
-            CheckHeader(FileProcessingConstants.LoadedFile);
-
-            EncryptingAnimation();
-
-            var input = await IO.ReadFile(FileProcessingConstants.LoadedFile);
-            fileHkdfSalt = CryptoUtilities.RndByteSized(CryptoConstants.SaltSize);
-
-            fileKey = Crypto.HKDF.HkdfDerivePinned(
-                MasterKey, fileHkdfSalt, "file key"u8.ToArray(), CryptoConstants.KeySize);
-
-            if (input != null)
+            UIThreadHelper.SafeInvoke(this, () =>
             {
-                var encryptedFile = await EncryptFile(input, fileKey, fileHkdfSalt);
+                MessageBox.Show(
+                    "Do NOT close the program while loading. This may cause corrupted data that is NOT recoverable.",
+                    "Warning", MessageBoxButtons.OK, MessageBoxIcon.Exclamation);
 
-                CryptoUtilities.ClearMemoryNative(input);
+                EncryptBtn.Enabled = false;
+                EncryptingAnimation();
 
-                if (encryptedFile.Length == 0)
-                    throw new CryptographicException("Encryption failed. The resulting file was empty.");
+                progressBar.Minimum = 0;
+                progressBar.Maximum = 100;
+                progressBar.Value = 0; // Reset progress bar at start
+            });
 
-                var originalExtension = Path.GetExtension(FileProcessingConstants.LoadedFile);
-                var extensionBytes = Encoding.UTF8.GetBytes(originalExtension);
+            if (FileVars.Result == null)
+                throw new InvalidOperationException("No input file loaded for encryption.");
 
-                if (extensionBytes.Length > 255)
-                    throw new InvalidOperationException("File extension is too long to store.");
+            double currentValue = 0;
+            double targetValue = 0;
 
-                byte extensionLength = (byte)extensionBytes.Length;
 
-                // Final file format: [Signature][Salt][ExtLen][Ext][Encrypted]
-                encryptedFile =
-                [
-                    ..CryptoConstants.FileSignature,
-                ..fileHkdfSalt,
-                extensionLength,
-                ..extensionBytes,
-                ..encryptedFile
-                ];
+            var timer = new Timer { Interval = 15 };
+            timer.Tick += (s, e) =>
+            {
+                var delta = (targetValue - currentValue) * 0.1;
+                if (Math.Abs(delta) < 0.2)
+                {
+                    currentValue = targetValue;
+                    progressBar.Value = (int)Math.Round(currentValue);
+                    timer.Stop();
+                }
+                else
+                {
+                    currentValue += delta;
+                    progressBar.Value = (int)Math.Round(currentValue);
+                }
+            };
 
-                await Task.Delay(3000, _encryptAnimationSource.Token);
+            // This is now Progress<long>, so we're passed raw byte counts:
+            var uiProgress = new Progress<double>(percent =>
+            {
+                targetValue = percent;
+                if (!timer.Enabled) timer.Start();
+            });
+
+
+            var success = await PerformEncryptionAsync(uiProgress).ConfigureAwait(false);
+
+            if (success)
+            {
+                await Task.Delay(2500);
+
+                UIThreadHelper.SafeInvoke(this, () =>
+                {
+                    FileOutputLbl.Text = "File encrypted.";
+                    FileOutputLbl.ForeColor = Color.LimeGreen;
+                });
+
                 await ResetEncryptAnimationTokenAsync();
 
-                FileProcessingConstants.Result = encryptedFile;
+                UIThreadHelper.SafeInvoke(this, () =>
+                {
+                    MessageBox.Show(
+                        "File was encrypted successfully. You may now export it.\nTo decrypt, open the encrypted file later.",
+                        "Success", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                });
+
+                GC.Collect(GC.MaxGeneration, GCCollectionMode.Aggressive, true, true);
+
+                UIThreadHelper.SafeInvoke(this, () =>
+                {
+                    FileSizeNumLbl.Text = FormatFileSize(FileVars.Result.Length);
+                    FileOutputLbl.Text = "Idle...";
+                    FileOutputLbl.ForeColor = Color.WhiteSmoke;
+                    progressBar.Value = 0; // Reset progress bar when done
+                });
+
+                FileVars.IsEncrypted = true;
+                FileVars.IsDecrypted = false;
             }
-
-            FileOutputLbl.Text = "File encrypted.";
-            FileOutputLbl.ForeColor = Color.LimeGreen;
-
-            MessageBox.Show(
-                "File was encrypted successfully. You may now export it.\nTo decrypt, open the encrypted file later.",
-                "Success", MessageBoxButtons.OK, MessageBoxIcon.Information);
-
-            GC.Collect(GC.MaxGeneration, GCCollectionMode.Aggressive, true, true);
-
-            FileSizeNumLbl.Text = $"{FileProcessingConstants.Result.Length:#,0} bytes";
-            FileOutputLbl.Text = "Idle...";
-            FileOutputLbl.ForeColor = Color.WhiteSmoke;
-
-            FileProcessingConstants.IsEncrypted = true;
-            FileProcessingConstants.IsDecrypted = false;
-        }
-        catch (OperationCanceledException)
-        {
-            // Operation was canceled, no action needed.
         }
         catch (InvalidOperationException ex)
         {
             await ResetEncryptAnimationTokenAsync();
-
-            FileOutputLbl.Text = "Error encrypting file.";
-            FileOutputLbl.ForeColor = Color.Red;
-
-            MessageBox.Show(ex.Message, "Invalid Operation", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-
-            FileProcessingConstants.IsEncrypted = false;
+            ShowError("Error encrypting file.", ex.Message, MessageBoxIcon.Warning);
+            FileVars.IsEncrypted = false;
             ErrorLogging.ErrorLog(ex);
         }
         catch (FileNotFoundException ex)
         {
             await ResetEncryptAnimationTokenAsync();
-
-            FileOutputLbl.Text = "Error encrypting file.";
-            FileOutputLbl.ForeColor = Color.Red;
-
-            MessageBox.Show("The file was not found. Please verify the file path.", "File Error",
-                MessageBoxButtons.OK, MessageBoxIcon.Error);
-
-            FileProcessingConstants.IsEncrypted = false;
+            ShowError("Error encrypting file.", "The file was not found. Please verify the file path.",
+                MessageBoxIcon.Error);
+            FileVars.IsEncrypted = false;
             ErrorLogging.ErrorLog(ex);
         }
         catch (CryptographicException ex)
         {
             await ResetEncryptAnimationTokenAsync();
-
-            FileOutputLbl.Text = "Error encrypting file.";
-            FileOutputLbl.ForeColor = Color.Red;
-
-            MessageBox.Show("An error has occured when trying to encrypt the file.", "Encryption Error",
-                MessageBoxButtons.OK, MessageBoxIcon.Error);
-
-            FileProcessingConstants.IsEncrypted = false;
+            ShowError("Error encrypting file.", "An error has occurred when trying to encrypt the file.",
+                MessageBoxIcon.Error);
+            FileVars.IsEncrypted = false;
             ErrorLogging.ErrorLog(ex);
         }
         catch (Exception ex)
         {
             await ResetEncryptAnimationTokenAsync();
-
-            FileOutputLbl.Text = "Error encrypting file.";
-            FileOutputLbl.ForeColor = Color.Red;
-
-            MessageBox.Show("An unexpected error occurred during encryption.", "Error",
-                MessageBoxButtons.OK, MessageBoxIcon.Error);
-
-            FileProcessingConstants.IsEncrypted = false;
+            ShowError("Error encrypting file.", "An unexpected error occurred during encryption.\n" + ex.Message,
+                MessageBoxIcon.Error);
+            FileVars.IsEncrypted = false;
             ErrorLogging.ErrorLog(ex);
         }
         finally
         {
-            CryptoUtilities.ClearMemoryNative(fileKey, fileHkdfSalt);
-            EncryptBtn.Enabled = true;
+            UIThreadHelper.SafeInvoke(this, () => { EncryptBtn.Enabled = true; });
         }
+    }
+
+    // Helper to show error on UI safely
+    private void ShowError(string title, string message, MessageBoxIcon icon)
+    {
+        UIThreadHelper.SafeInvoke(this, () =>
+        {
+            FileOutputLbl.Text = title;
+            FileOutputLbl.ForeColor = Color.Red;
+            progressBar.Value = 0;
+            MessageBox.Show(message, title, MessageBoxButtons.OK, icon);
+            FileOutputLbl.Text = "Idle...";
+            FileOutputLbl.ForeColor = Color.WhiteSmoke;
+        });
     }
 
 
@@ -634,59 +669,49 @@ public partial class Encryption : UserControl
         }
     }
 
-    private void FileEncryptDecryptBox_Enter(object sender, EventArgs e)
-    {
-    }
-
     /// <summary>
-    /// Represents static fields and constants used for managing file processing state and UI interactions.
+    ///     Represents static fields and constants used for managing file processing state and UI interactions.
     /// </summary>
-    private static class FileProcessingConstants
+    public static class FileVars
     {
         /// <summary>
-        /// Gets the maximum allowed file size for processing, in bytes (2,000,000,000 bytes).
-        /// </summary>
-        public const int MaximumFileSize = 2_000_000_000;
-
-        /// <summary>
-        /// Gets or sets the currently loaded file path as a string.
+        ///     Gets or sets the currently loaded file path as a string.
         /// </summary>
         public static string LoadedFile = string.Empty;
 
         /// <summary>
-        /// Gets or sets the result of the file processing, stored as a byte array.
+        ///     Gets or sets the result of the file processing, stored as a stream.
         /// </summary>
-        public static byte[] Result = [];
+        public static Stream? Result;
 
         /// <summary>
-        /// Gets or sets the current file extension as a string.
+        ///     Gets or sets the current file extension as a string.
         /// </summary>
         public static string FileExtension = string.Empty;
 
         /// <summary>
-        /// Indicates whether the currently loaded file is encrypted.
+        ///     Indicates whether the currently loaded file is encrypted.
         /// </summary>
         public static bool IsEncrypted;
 
         /// <summary>
-        /// Indicates whether the currently loaded file is decrypted.
+        ///     Indicates whether the currently loaded file is decrypted.
         /// </summary>
         public static bool IsDecrypted;
 
         /// <summary>
-        /// Gets or sets a value indicating whether a file has been opened.
+        ///     Gets or sets a value indicating whether a file has been opened.
         /// </summary>
         public static bool FileOpened { get; set; }
 
         /// <summary>
-        /// Gets or sets the size of the currently loaded file in bytes.
+        ///     Gets or sets the size of the currently loaded file in bytes.
         /// </summary>
         public static long FileSize { get; set; }
 
         /// <summary>
-        /// Gets or sets the original extension of the loaded file, if any.
+        ///     Gets or sets the original extension of the loaded file, if any.
         /// </summary>
         public static string? OriginalExtension { get; set; }
     }
-
 }

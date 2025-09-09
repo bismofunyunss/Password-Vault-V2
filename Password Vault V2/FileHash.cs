@@ -1,4 +1,6 @@
-﻿namespace Password_Vault_V2;
+﻿using System.Drawing.Drawing2D;
+
+namespace Password_Vault_V2;
 
 public sealed partial class FileHash : UserControl
 {
@@ -18,14 +20,10 @@ public sealed partial class FileHash : UserControl
     /// <exception cref="UnauthorizedAccessException">Thrown if the caller does not have the required permission.</exception>
     private static async Task<string> CalculateHash(string file)
     {
-        using var ms = new MemoryStream();
-        await using (var fs = new FileStream(file, FileMode.Open,
-                         FileAccess.Read))
-        {
-            await fs.CopyToAsync(ms);
-        }
 
-        var hashBytes = Crypto.HashingMethods.Sha3Hash(ms.ToArray());
+        var fileBytes = await IO.ReadFile(file);
+
+        var hashBytes = Crypto.HashingMethods.Sha3Hash(fileBytes);
         var hashHexString = DataConversionHelpers.ByteArrayToHexString(hashBytes).ToLower();
 
         return hashHexString;
@@ -95,5 +93,11 @@ public sealed partial class FileHash : UserControl
             ErrorLogging.ErrorLog(ex);
             MessageBox.Show(ex.Message, @"Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
         }
+    }
+
+    private void FileHash_Paint(object sender, PaintEventArgs e)
+    {
+        e.Graphics.Clear(this.BackColor);  // Clear previous drawings
+        e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
     }
 }

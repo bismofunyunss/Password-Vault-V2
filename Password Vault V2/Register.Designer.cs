@@ -36,7 +36,7 @@ namespace Password_Vault_V2
             // 
             userLbl.AutoSize = true;
             userLbl.Font = new Font("Century Gothic", 11F);
-            userLbl.Location = new Point(6, 26);
+            userLbl.Location = new Point(8, 28);
             userLbl.Name = "userLbl";
             userLbl.Size = new Size(121, 25);
             userLbl.TabIndex = 0;
@@ -56,7 +56,7 @@ namespace Password_Vault_V2
             // 
             passLbl.AutoSize = true;
             passLbl.Font = new Font("Century Gothic", 11F);
-            passLbl.Location = new Point(6, 87);
+            passLbl.Location = new Point(8, 89);
             passLbl.Name = "passLbl";
             passLbl.Size = new Size(114, 25);
             passLbl.TabIndex = 2;
@@ -78,7 +78,7 @@ namespace Password_Vault_V2
             // 
             confirmPassLbl.AutoSize = true;
             confirmPassLbl.Font = new Font("Century Gothic", 11F);
-            confirmPassLbl.Location = new Point(6, 152);
+            confirmPassLbl.Location = new Point(8, 154);
             confirmPassLbl.Name = "confirmPassLbl";
             confirmPassLbl.Size = new Size(205, 25);
             confirmPassLbl.TabIndex = 4;
@@ -109,7 +109,7 @@ namespace Password_Vault_V2
             CreateAccountBtn.Location = new Point(6, 220);
             CreateAccountBtn.Name = "CreateAccountBtn";
             CreateAccountBtn.Size = new Size(438, 44);
-            CreateAccountBtn.TabIndex = 4;
+            CreateAccountBtn.TabIndex = 5;
             CreateAccountBtn.Text = "&Create Account";
             CreateAccountBtn.UseVisualStyleBackColor = false;
             CreateAccountBtn.Click += CreateAccountBtn_Click;
@@ -118,7 +118,7 @@ namespace Password_Vault_V2
             // 
             statusLbl.AutoSize = true;
             statusLbl.Font = new Font("Century Gothic", 11F);
-            statusLbl.Location = new Point(6, 397);
+            statusLbl.Location = new Point(8, 335);
             statusLbl.Name = "statusLbl";
             statusLbl.Size = new Size(94, 25);
             statusLbl.TabIndex = 8;
@@ -128,7 +128,7 @@ namespace Password_Vault_V2
             // 
             outputLbl.AutoSize = true;
             outputLbl.Font = new Font("Century Gothic", 11F);
-            outputLbl.Location = new Point(104, 397);
+            outputLbl.Location = new Point(106, 335);
             outputLbl.Name = "outputLbl";
             outputLbl.Size = new Size(71, 25);
             outputLbl.TabIndex = 9;
@@ -149,9 +149,10 @@ namespace Password_Vault_V2
             RegisterBox.Controls.Add(userLbl);
             RegisterBox.Font = new Font("Century Gothic", 11F, FontStyle.Regular, GraphicsUnit.Point, 0);
             RegisterBox.ForeColor = Color.WhiteSmoke;
-            RegisterBox.Location = new Point(12, 12);
+            RegisterBox.Location = new Point(12, 16);
             RegisterBox.Name = "RegisterBox";
-            RegisterBox.Size = new Size(450, 434);
+            RegisterBox.Padding = new Padding(5);
+            RegisterBox.Size = new Size(455, 443);
             RegisterBox.TabIndex = 0;
             RegisterBox.TabStop = false;
             RegisterBox.Text = "Register Account";
@@ -161,7 +162,7 @@ namespace Password_Vault_V2
             WelcomeLabel.AutoSize = true;
             WelcomeLabel.Font = new Font("Century Gothic", 11F);
             WelcomeLabel.ForeColor = Color.White;
-            WelcomeLabel.Location = new Point(6, 372);
+            WelcomeLabel.Location = new Point(8, 299);
             WelcomeLabel.Name = "WelcomeLabel";
             WelcomeLabel.Size = new Size(169, 25);
             WelcomeLabel.TabIndex = 12;
@@ -169,12 +170,14 @@ namespace Password_Vault_V2
             // 
             // Register
             // 
-            AutoScaleDimensions = new SizeF(10F, 25F);
-            AutoScaleMode = AutoScaleMode.Font;
+            AutoScaleDimensions = new SizeF(144F, 144F);
+            AutoScaleMode = AutoScaleMode.Dpi;
             BackColor = Color.FromArgb(30, 30, 30);
             Controls.Add(RegisterBox);
+            DoubleBuffered = true;
             Name = "Register";
-            Size = new Size(474, 458);
+            Size = new Size(470, 472);
+            Paint += Register_Paint;
             RegisterBox.ResumeLayout(false);
             RegisterBox.PerformLayout();
             ResumeLayout(false);

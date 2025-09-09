@@ -1,7 +1,9 @@
-﻿using System.Diagnostics;
-using System.Runtime.InteropServices;
+﻿using System.Buffers;
+using System.Diagnostics;
+using System.Drawing.Drawing2D;
+using System.Security.Cryptography;
 using System.Text;
-using Windows.Security.Credentials;
+using OtpNet;
 using static Password_Vault_V2.Crypto;
 
 namespace Password_Vault_V2;
@@ -13,10 +15,155 @@ public sealed partial class Register : UserControl
     private readonly SecurePasswordBuffer _passwordBuffer = new();
     private Task? _animationTask;
 
+
     public Register()
     {
         InitializeComponent();
     }
+
+    private static (byte[] HashSalt, byte[] KeyDerivationSalt, byte[] IntermediateKeySalt,
+        byte[] MasterKeySalt, byte[] MasterKeyEncryptionSalt, byte[] FileSalt, byte[] EncryptionKeySalt,
+        byte[] FileKeySalt, byte[] HmacSalt, byte[] DerivedHmacSalt) GenerateAllSalts()
+    {
+        var saltSize = FipsCrypto.FipsEnabled ? FipsCrypto.SaltSize : CryptoConstants.SaltSize;
+
+        return (
+            CryptoUtilities.RndByteSized(saltSize), // HashSalt
+            CryptoUtilities.RndByteSized(saltSize), // KeyDerivationSalt
+            CryptoUtilities.RndByteSized(saltSize), // IntermediateKeySalt
+            CryptoUtilities.RndByteSized(saltSize), // MasterKeySalt
+            CryptoUtilities.RndByteSized(saltSize), // MasterKeyEncryptionSalt
+            CryptoUtilities.RndByteSized(saltSize), // FileSalt
+            CryptoUtilities.RndByteSized(saltSize), // EncryptionKeySalt
+            CryptoUtilities.RndByteSized(saltSize), // FileKeySalt
+            CryptoUtilities.RndByteSized(saltSize), // HmacSalt
+            CryptoUtilities.RndByteSized(saltSize) // DerivedHmacSalt
+        );
+    }
+
+    private async Task<DerivedKeys> DeriveKeysAsync(byte[] password,
+        (byte[] HashSalt, byte[] KeyDerivationSalt, byte[] IntermediateKeySalt,
+            byte[] MasterKeySalt, byte[] MasterKeyEncryptionSalt, byte[] FileSalt,
+            byte[] EncryptionKeySalt, byte[] FileKeySalt, byte[] HmacSalt, byte[] DerivedHmacSalt) salts)
+    {
+        if (!FipsCrypto.FipsEnabled)
+        {
+            var keys = new DerivedKeys(CryptoConstants.KeySize, CryptoConstants.PasswordHashSize);
+
+            // Password Hash
+            {
+                var hash = await HashingMethods.Argon2Id(password, salts.HashSalt, CryptoConstants.PasswordHashSize);
+                hash.AsSpan().CopyTo(keys.PasswordHash.AsSpan());
+                CryptographicOperations.ZeroMemory(hash);
+            }
+
+            // Password Derived Key (intermediate key)
+            {
+                var derivedKey =
+                    await HashingMethods.Argon2Id(password, salts.KeyDerivationSalt, CryptoConstants.KeySize);
+                var intermediateKey = DeriveAndPin(derivedKey, salts.IntermediateKeySalt,
+                    "intermediate key"u8.ToArray(), CryptoConstants.KeySize);
+                derivedKey.AsSpan().Clear();
+                intermediateKey.AsSpan().CopyTo(keys.IntermediateKey.AsSpan());
+            }
+
+            // Master Key
+            {
+                var masterKey = CryptoUtilities.RndByteSized(CryptoConstants.KeySize);
+                masterKey.AsSpan().CopyTo(keys.MasterKey.AsSpan());
+            }
+
+            // Derived File Key & Encryption Key
+            {
+                var derivedFileKey =
+                    await HashingMethods.Argon2Id(password, salts.FileKeySalt, CryptoConstants.KeySize);
+                var encryptionKey = DeriveAndPin(derivedFileKey, salts.EncryptionKeySalt, "encryption key"u8.ToArray(),
+                    CryptoConstants.KeySize);
+                derivedFileKey.AsSpan().Clear();
+                encryptionKey.AsSpan().CopyTo(keys.EncryptionKey.AsSpan());
+            }
+
+            // Derived HMAC Key & HMAC Key
+            {
+                var derivedHmacKey =
+                    await HashingMethods.Argon2Id(password, salts.DerivedHmacSalt, CryptoConstants.KeySize);
+                var hmacKey = DeriveAndPin(derivedHmacKey, salts.HmacSalt, "hmac key"u8.ToArray(),
+                    CryptoConstants.HmacLength);
+                derivedHmacKey.AsSpan().Clear();
+                hmacKey.AsSpan().CopyTo(keys.HmacKey.AsSpan());
+            }
+            return keys;
+        }
+
+        var fipsKeys = new DerivedKeys(CryptoConstants.KeySize, 32);
+
+        // Password Hash
+        {
+            var hash = FipsCrypto.Pbkdf2(password, salts.HashSalt, 32);
+            hash.AsSpan().CopyTo(fipsKeys.PasswordHash.AsSpan());
+            CryptographicOperations.ZeroMemory(hash);
+        }
+
+        // Password Derived Key (intermediate key)
+        {
+            var derivedKey =
+                FipsCrypto.Pbkdf2(password, salts.KeyDerivationSalt, FipsCrypto.KeySize);
+            var intermediateKey = FipsCrypto.Hkdf.DeriveKey(derivedKey, salts.IntermediateKeySalt,
+                "intermediate key"u8.ToArray(), CryptoConstants.KeySize);
+            CryptographicOperations.ZeroMemory(derivedKey);
+            intermediateKey.AsSpan().CopyTo(fipsKeys.IntermediateKey.AsSpan());
+        }
+
+        // Master Key
+        {
+            var masterKey = CryptoUtilities.RndByteSized(CryptoConstants.KeySize);
+            masterKey.AsSpan().CopyTo(fipsKeys.MasterKey.AsSpan());
+        }
+
+        // Derived File Key & Encryption Key
+        {
+            var derivedFileKey =
+                FipsCrypto.Pbkdf2(password, salts.FileKeySalt, FipsCrypto.KeySize);
+            var encryptionKey = FipsCrypto.Hkdf.DeriveKey(derivedFileKey, salts.EncryptionKeySalt,
+                "encryption key"u8.ToArray(),
+                CryptoConstants.KeySize);
+            derivedFileKey.AsSpan().Clear();
+            encryptionKey.AsSpan().CopyTo(fipsKeys.EncryptionKey.AsSpan());
+        }
+
+        // Derived HMAC Key & HMAC Key
+        {
+            var derivedHmacKey =
+                FipsCrypto.Pbkdf2(password, salts.DerivedHmacSalt, FipsCrypto.KeySize);
+            var hmacKey = FipsCrypto.Hkdf.DeriveKey(derivedHmacKey, salts.HmacSalt, "hmac key"u8.ToArray(),
+                32);
+            derivedHmacKey.AsSpan().Clear();
+            hmacKey.AsSpan().CopyTo(fipsKeys.HmacKey.AsSpan());
+        }
+        return fipsKeys;
+    }
+
+    private byte[] BuildFinalFile(
+        (byte[] HashSalt, byte[] KeyDerivationSalt, byte[] IntermediateKeySalt,
+            byte[] MasterKeySalt, byte[] MasterKeyEncryptionSalt, byte[] FileSalt,
+            byte[] EncryptionKeySalt, byte[] FileKeySalt, byte[] HmacSalt, byte[] DerivedHmacSalt) salts,
+        byte[] uuid,
+        byte[] encryptedUserFile)
+    {
+        return salts.HmacSalt
+            .Concat(salts.DerivedHmacSalt)
+            .Concat(salts.FileSalt)
+            .Concat(salts.FileKeySalt)
+            .Concat(salts.EncryptionKeySalt)
+            .Concat(uuid) // use the same UUID from registration
+            .Concat(salts.HashSalt)
+            .Concat(salts.MasterKeyEncryptionSalt)
+            .Concat(salts.KeyDerivationSalt)
+            .Concat(salts.IntermediateKeySalt)
+            .Concat(encryptedUserFile)
+            .ToArray();
+    }
+
 
     /// <summary>
     ///     Validates a password by checking length, character composition, and optional confirmation match.
@@ -83,72 +230,6 @@ public sealed partial class Register : UserControl
                 " 6.) Both passwords must match.");
     }
 
-    /// <summary>
-    ///     Securely clears sensitive data from memory by zeroing out provided byte and char arrays using pinned memory.
-    ///     Also resets the internal cancellation token source.
-    /// </summary>
-    /// <param name="password">The user's password in byte array form.</param>
-    /// <param name="confirmPassword">The confirmation password in byte array form.</param>
-    /// <param name="passwordChars">The user's password in char array form.</param>
-    /// <param name="confirmPasswordChars">The confirmation password in char array form.</param>
-    /// <param name="passwordHash">The derived password hash to clear from memory.</param>
-    /// <param name="passwordDerivedKey">The key derived from the password to clear from memory.</param>
-    /// <param name="uuid">The UUID used in the user file to clear from memory.</param>
-    /// <param name="encryptedMasterKey">The encrypted master key to be cleared from memory.</param>
-    /// <param name="encryptionKey">The key used for encrypting the user file to clear from memory.</param>
-    /// <param name="hashSalt">The salt used for hashing the password.</param>
-    /// <param name="userFileSalt">The salt used for deriving the user file encryption key.</param>
-    /// <param name="intermediateKeySalt">The salt used for deriving the intermediate key.</param>
-    /// <param name="masterKeySalt">The salt used for deriving the master key.</param>
-    /// <returns>A task that represents the asynchronous cleanup operation.</returns>
-    /// <remarks>
-    ///     This method uses <see cref="GCHandle" /> to pin each array and zeroes out the memory to reduce the risk of
-    ///     sensitive data lingering in memory. It should be called in a final block after sensitive operations complete.
-    /// </remarks>
-    private static async Task CleanupSecurely(
-        byte[]? password, byte[]? confirmPassword, char[]? passwordChars, char[]? confirmPasswordChars,
-        byte[]? passwordHash, byte[]? passwordDerivedKey, byte[]? uuid, byte[]? encryptedMasterKey,
-        byte[]? encryptionKey,
-        byte[]? hashSalt, byte[]? userFileSalt, byte[]? intermediateKeySalt, byte[]? masterKeySalt, byte[]? intermediateKey, byte[]? masterKey,
-                   byte[]? derivedFileKey, byte[]? derivedHmacKey, byte[]? hmacKey)
-    {
-        static void ClearWithGCHandle<T>(params T[]?[] arrays) where T : unmanaged
-        {
-            foreach (var arr in arrays)
-            {
-                if (arr == null) continue;
-
-                var handle = GCHandle.Alloc(arr, GCHandleType.Pinned);
-                try
-                {
-                    var ptr = handle.AddrOfPinnedObject();
-                    var byteSize = Buffer.ByteLength(arr);
-                    for (var i = 0; i < byteSize; i++)
-                        Marshal.WriteByte(ptr, i, 0);
-                }
-                finally
-                {
-                    handle.Free();
-                }
-            }
-        }
-
-        // Clear byte[] and char[] arrays safely
-        ClearWithGCHandle(password, confirmPassword, passwordHash, passwordDerivedKey,
-            uuid, encryptedMasterKey, encryptionKey,
-            hashSalt, userFileSalt, intermediateKeySalt, masterKeySalt, intermediateKey, masterKey, derivedFileKey, derivedHmacKey,
-            hmacKey);
-
-        ClearWithGCHandle(passwordChars, confirmPasswordChars);
-
-        // Reset cancellation token
-        if (_cancellationTokenSource is not null)
-        {
-            await _cancellationTokenSource.CancelAsync();
-            _cancellationTokenSource.Dispose();
-            _cancellationTokenSource = new CancellationTokenSource();
-        }
-    }
 
     /// <summary>
     ///     Starts the label animation indicating that account creation is in progress.
@@ -231,69 +312,66 @@ public sealed partial class Register : UserControl
         Process.GetCurrentProcess().PriorityClass = ProcessPriorityClass.Normal;
         StartAnimation();
 
-        char[]? passwordChars = null, confirmPasswordChars = null;
-
-        byte[]? passwordHash = null, passwordDerivedKey = null, intermediateKey = null, masterKey = null, decryptedBytes = null, derivedFileKey = null, fileKeySalt = null,
-            decryptedMasterKey = null, keyDerivationSalt = null, encryptionKeySalt = null, masterKeyEncryptionSalt = null,
-            fileSalt = null, hmacKey = null, derivedHmacKey = null, hmacSalt = null, derivedHmacSalt = null;
-        byte[]? encryptedMasterKey = null;
-        byte[]? encryptionKey = null;
-        byte[]? hashSalt = null, masterKeySalt = null, intermediateKeySalt = null;
-        byte[]? uuid = null;
-
         try
         {
-            passwordChars = _passwordBuffer.ToCharArray();
-            confirmPasswordChars = _confirmPasswordBuffer.ToCharArray();
-            ValidateUsernameAndPassword(username, passwordChars, confirmPasswordChars);
+            // Validate inputs (use your existing validation)
+            ValidateUsernameAndPassword(username, _passwordBuffer.ToCharArray(), _confirmPasswordBuffer.ToCharArray());
 
-            // Generate salts and UUID
-            hashSalt = CryptoUtilities.RndByteSized(CryptoConstants.SaltSize);
-            masterKeySalt = CryptoUtilities.RndByteSized(CryptoConstants.SaltSize);
-            masterKeyEncryptionSalt = CryptoUtilities.RndByteSized(CryptoConstants.SaltSize);
-            fileSalt = CryptoUtilities.RndByteSized(CryptoConstants.SaltSize);
-            encryptionKeySalt = CryptoUtilities.RndByteSized(CryptoConstants.SaltSize);
-            keyDerivationSalt = CryptoUtilities.RndByteSized(CryptoConstants.SaltSize);
-            intermediateKeySalt = CryptoUtilities.RndByteSized(CryptoConstants.SaltSize);
-            fileKeySalt = CryptoUtilities.RndByteSized(CryptoConstants.SaltSize);
-            hmacSalt = CryptoUtilities.RndByteSized(CryptoConstants.SaltSize);
-            derivedHmacSalt = CryptoUtilities.RndByteSized(CryptoConstants.SaltSize);
-            uuid = Guid.NewGuid().ToByteArray();
+            // Generate all salts needed for derivation and encryption
+            var salts = GenerateAllSalts();
 
             IO.CreateUserPath(username);
 
-            // Key derivation
-            passwordHash = await HashingMethods.Argon2Id(password, hashSalt, CryptoConstants.PasswordHashSize);
+            // Securely derive keys & hashes in a disposable container
+            using var derivedKeys = await DeriveKeysAsync(password, salts);
 
-            passwordDerivedKey = await HashingMethods.Argon2Id(password, keyDerivationSalt, CryptoConstants.KeySize);
-            intermediateKey = HKDF.HkdfDerivePinned(passwordDerivedKey, intermediateKeySalt, "intermediate key"u8.ToArray(), CryptoConstants.KeySize);
-            masterKey = HKDF.HkdfDerivePinned(intermediateKey, masterKeySalt, "master key"u8.ToArray(), CryptoConstants.KeySize);
-            derivedFileKey = await HashingMethods.Argon2Id(password, fileKeySalt, CryptoConstants.KeySize);
-            encryptionKey = HKDF.HkdfDerivePinned(derivedFileKey, encryptionKeySalt, "encryption key"u8.ToArray(), CryptoConstants.KeySize);
-            derivedHmacKey = await HashingMethods.Argon2Id(password, derivedHmacSalt, CryptoConstants.KeySize);
-            hmacKey = HKDF.HkdfDerivePinned(derivedHmacKey, hmacSalt, "hmac key"u8.ToArray(), CryptoConstants.HmacLength);
-            encryptedMasterKey = await EncryptFile(masterKey, intermediateKey, masterKeyEncryptionSalt);
+            // Encrypt master key with intermediate key
+            var encryptedMasterKey = await EncryptFile(
+                derivedKeys.MasterKey.AsSpan().ToArray(),
+                derivedKeys.IntermediateKey.AsSpan().ToArray(),
+                salts.MasterKeyEncryptionSalt);
 
+            var keyVersion = 1;
+
+            var uuid = Guid.NewGuid().ToByteArray();
             // Build and encrypt user file
-            var userFile = IO.BuildUserFile(passwordHash, uuid, encryptedMasterKey);
-            var encryptedUserFile = await EncryptFile(userFile, encryptionKey, fileSalt);
+            var userFile = IO.BuildUserFile(
+                derivedKeys.PasswordHash.AsSpan().ToArray(),
+                uuid,
+                Encoding.UTF8.GetBytes(emailTxt.Text), encryptedMasterKey);
 
-            var hmac = HashingMethods.HmacSha3(encryptedUserFile, hmacKey);
+            var encryptedUserFile = await EncryptFile(
+                userFile,
+                derivedKeys.EncryptionKey.AsSpan().ToArray(),
+                salts.FileSalt);
 
-            var finalFile = hmac.Concat(hmacSalt).Concat(derivedHmacSalt).Concat(fileSalt).Concat(fileKeySalt).Concat(encryptionKeySalt).Concat(uuid).Concat(hashSalt).Concat(masterKeyEncryptionSalt).
-                Concat(keyDerivationSalt).Concat(intermediateKeySalt).Concat(encryptedUserFile).ToArray();
+            // Calculate HMAC
+            var hmac = HashingMethods.HmacSha3(encryptedUserFile, derivedKeys.HmacKey.ToArrayAndClear());
+
+            // Assemble final file (concatenate all needed metadata and encrypted data)
+            var finalFile = BuildFinalFile(salts, uuid, encryptedUserFile);
+
             var path = UserFileManager.GetUserFilePath(username);
-
             await IO.WriteFile(path, finalFile);
             File.SetAttributes(path, FileAttributes.ReadOnly);
+
+            outputLbl.Text = "User created successfully.";
+            outputLbl.ForeColor = Color.LimeGreen;
 
             MessageBox.Show(
                 "Registration successful! Make sure you do NOT forget your password or you will lose access to all of your files.",
                 "Registration Complete", MessageBoxButtons.OK, MessageBoxIcon.Information);
+
+            // Zero sensitive byte arrays after use
+            CryptographicOperations.ZeroMemory(encryptedMasterKey);
+            CryptographicOperations.ZeroMemory(encryptedUserFile);
+            CryptographicOperations.ZeroMemory(finalFile);
+            CryptographicOperations.ZeroMemory(hmac);
         }
         catch (Exception ex)
         {
-            MessageBox.Show(ex.Message, "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            MessageBox.Show("An error occurred when creating account.", "Error", MessageBoxButtons.OK,
+                MessageBoxIcon.Error);
             ErrorLogging.ErrorLog(ex);
         }
         finally
@@ -308,41 +386,106 @@ public sealed partial class Register : UserControl
                 ErrorLogging.ErrorLog(animationEx);
             }
 
-            try
-            {
-                await CleanupSecurely(
-                    password, confirmPassword,
-                    passwordChars, confirmPasswordChars,
-                    passwordHash, passwordDerivedKey,
-                    uuid, encryptedMasterKey, encryptionKey,
-                    hashSalt, fileSalt, intermediateKeySalt, masterKeySalt, intermediateKey, masterKey,
-                    derivedFileKey, derivedHmacKey, hmacKey);
+            // Clear UI & buffers safely
+            UiController.LogicMethods.EnableUi(userTxt, CreateAccountBtn, passTxt, confirmPassTxt);
+            outputLbl.Text = "Idle...";
+            outputLbl.ForeColor = Color.White;
 
-                GC.Collect(GC.MaxGeneration, GCCollectionMode.Aggressive, true, true);
-                GC.WaitForPendingFinalizers();
-            }
-            catch (Exception cleanupEx)
-            {
-                MessageBox.Show(cleanupEx.Message, "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
-                ErrorLogging.ErrorLog(cleanupEx);
-            }
+            userTxt.Clear();
+            passTxt.Clear();
+            confirmPassTxt.Clear();
 
-            try
-            {
-                UiController.LogicMethods.EnableUi(userTxt, CreateAccountBtn, passTxt, confirmPassTxt);
-                outputLbl.Text = "Idle...";
-                outputLbl.ForeColor = Color.White;
-                userTxt.Clear();
-                passTxt.Clear();
-                confirmPassTxt.Clear();
-            }
-            catch (Exception uiEx)
-            {
-                MessageBox.Show(uiEx.Message, "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
-                ErrorLogging.ErrorLog(uiEx);
-            }
+            GC.Collect(GC.MaxGeneration, GCCollectionMode.Aggressive, true, true);
+            GC.WaitForPendingFinalizers();
         }
     }
+
+    private async Task FipsModeRegisterAsync(string username, byte[] password, byte[] confirmPassword, string email)
+    {
+        UiController.LogicMethods.DisableUi(userTxt, CreateAccountBtn, passTxt, confirmPassTxt);
+        StartAnimation();
+
+        try
+        {
+            ValidateUsernameAndPassword(username, _passwordBuffer.ToCharArray(), _confirmPasswordBuffer.ToCharArray());
+
+            // 1️⃣ Generate all salts
+            var salts = GenerateAllSalts();
+
+            // 2️⃣ Derive keys
+            using var keys = await DeriveKeysAsync(password, salts);
+
+            // 3️⃣ Generate a UUID once
+            var uuid = Guid.NewGuid().ToByteArray();
+
+            // 4️⃣ Encrypt master key using IntermediateKey + MasterKeySalt
+            var encryptedMasterKey = FipsCrypto.AesKeyWrapRfc5649.Wrap(
+                keys.IntermediateKey.AsSpan().ToArray(), keys.MasterKey.AsSpan().ToArray());
+
+
+            // 5️⃣ Build user file: password hash || UUID || email || encrypted master key
+            var userFile = IO.BuildUserFile(
+                keys.PasswordHash.AsSpan().ToArray(),
+                uuid,
+                Encoding.UTF8.GetBytes(email),
+                encryptedMasterKey);
+
+            // 6️⃣ Encrypt user file with AES-HMAC (single pass)
+            var encryptedUserFile = FipsCrypto.SimpleAesHmac.Encrypt(
+                keys.EncryptionKey.AsSpan().ToArray(),
+                keys.HmacKey.AsSpan().ToArray(),
+                userFile);
+
+            // 7️⃣ Assemble final file with metadata + encryptedUserFile
+            var finalFile = BuildFinalFile(
+                salts,
+                uuid,
+                encryptedUserFile);
+
+            // 8️⃣ Write to disk
+            var path = UserFileManager.GetUserFilePath(username);
+
+            using var keyStore = new SoftwareKeyStore(UserFileManager.GetUserFolder(username));
+
+            // 3. Add new master key
+            keyStore.AddNewMasterKey(encryptedMasterKey, "Initial key");
+
+            CryptographicOperations.ZeroMemory(encryptedMasterKey);
+            CryptographicOperations.ZeroMemory(keys.IntermediateKey.AsSpan());
+
+            await IO.WriteFile(path, finalFile);
+            File.SetAttributes(path, FileAttributes.ReadOnly);
+
+            outputLbl.Text = "User created successfully.";
+            outputLbl.ForeColor = Color.LimeGreen;
+
+            MessageBox.Show(
+                "Registration successful! Do NOT forget your password.",
+                "Registration Complete", MessageBoxButtons.OK, MessageBoxIcon.Information);
+
+            // Zero sensitive memory
+            CryptographicOperations.ZeroMemory(encryptedMasterKey);
+            CryptographicOperations.ZeroMemory(encryptedUserFile);
+            CryptographicOperations.ZeroMemory(finalFile);
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show("An error occurred during registration.", "Error", MessageBoxButtons.OK,
+                MessageBoxIcon.Error);
+            ErrorLogging.ErrorLog(ex);
+        }
+        finally
+        {
+            await StopAnimationAsync();
+            UiController.LogicMethods.EnableUi(userTxt, CreateAccountBtn, passTxt, confirmPassTxt);
+            userTxt.Clear();
+            passTxt.Clear();
+            confirmPassTxt.Clear();
+            GC.Collect(GC.MaxGeneration, GCCollectionMode.Aggressive, true, true);
+            GC.WaitForPendingFinalizers();
+        }
+    }
+
 
     /// <summary>
     ///     Handles the click event of the <c>CreateAccountBtn</c> button. Initiates the user account registration process,
@@ -365,28 +508,127 @@ public sealed partial class Register : UserControl
             throw new Exception("Confirm password textbox was empty.");
 
         MessageBox.Show(
-            @"Do NOT close the program while loading. This may cause corrupted data that is NOT recoverable.",
-            @"Info", MessageBoxButtons.OK, MessageBoxIcon.Exclamation);
+            "Do NOT close the program while loading. This may cause corrupted data that is NOT recoverable.",
+            "Info", MessageBoxButtons.OK, MessageBoxIcon.Exclamation);
 
+        var username = userTxt.Text.Trim();
+
+        // Generate TOTP secret
+        var userSecret = RandomNumberGenerator.GetBytes(20);
+
+        // Store TOTP secret securely
+        using var store = new SoftwareKeyStore(UserFileManager.GetUserFolder(username));
+        store.AddTotpSecret(username, userSecret, "Authenticator");
+
+        // Generate QR code
+        string issuer = "Password Vault";
+        string otpauthUrl = $"otpauth://totp/{issuer}:{username}?secret={Base32Encoding.ToString(userSecret)}&issuer={issuer}&digits=6";
+
+        using var verifyForm = new TotpVerify(userSecret, issuer, username, Base32Encoding.ToString(userSecret));
+        if (verifyForm.ShowDialog() != DialogResult.OK)
+        {
+            MessageBox.Show(
+                "You must successfully verify your Authenticator before continuing.",
+                "Verification Required",
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Warning);
+
+            CryptographicOperations.ZeroMemory(userSecret);
+            return; // stop account creation
+        }
+
+        // Wipe sensitive memory
+        CryptographicOperations.ZeroMemory(userSecret);
+
+        // Continue with account creation
         var passwordBytes = _passwordBuffer.ToByteArray();
         var confirmPasswordBytes = _confirmPasswordBuffer.ToByteArray();
 
         try
         {
-            await RegisterAsync(userTxt.Text.Trim(), _passwordBuffer.ToByteArray(),
-                _confirmPasswordBuffer.ToByteArray());
-        }
-        catch (Exception ex)
-        {
-            UiController.LogicMethods.EnableUi(userTxt, CreateAccountBtn, passTxt, confirmPassTxt);
-            ErrorLogging.ErrorLog(ex);
-            MessageBox.Show(ex.Message, "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            if (!FipsCrypto.FipsEnabled)
+                await RegisterAsync(username, passwordBytes, confirmPasswordBytes);
+            else
+                await FipsModeRegisterAsync(username, passwordBytes, confirmPasswordBytes, username);
         }
         finally
         {
             _passwordBuffer.Dispose();
             _confirmPasswordBuffer.Dispose();
             CryptoUtilities.ClearMemoryNative(passwordBytes, confirmPasswordBytes);
+        }
+
+        MessageBox.Show("Account created successfully!", "Success", MessageBoxButtons.OK, MessageBoxIcon.Information);
+    }
+
+
+    private void Register_Paint(object sender, PaintEventArgs e)
+    {
+        e.Graphics.Clear(BackColor); // Clear previous drawings
+        e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
+    }
+
+    public sealed class SecureBuffer : IDisposable
+    {
+        private byte[]? _buffer;
+
+        public SecureBuffer(int size)
+        {
+            _buffer = ArrayPool<byte>.Shared.Rent(size);
+            _buffer.AsSpan(0, size).Clear(); // Clear on rent
+            Size = size;
+        }
+
+        private int Size { get; }
+
+        public void Dispose()
+        {
+            if (_buffer != null)
+            {
+                CryptographicOperations.ZeroMemory(_buffer.AsSpan(0, Size));
+                ArrayPool<byte>.Shared.Return(_buffer, true);
+                _buffer = null;
+            }
+        }
+
+        public Span<byte> AsSpan()
+        {
+            if (_buffer is null) throw new ObjectDisposedException(nameof(SecureBuffer));
+            return _buffer.AsSpan(0, Size);
+        }
+
+        public byte[] ToArrayAndClear()
+        {
+            var copy = AsSpan().ToArray();
+            CryptographicOperations.ZeroMemory(AsSpan());
+            return copy;
+        }
+    }
+
+    public sealed class DerivedKeys : IDisposable
+    {
+        public DerivedKeys(int keySize, int hashSize)
+        {
+            PasswordHash = new SecureBuffer(hashSize);
+            IntermediateKey = new SecureBuffer(keySize);
+            MasterKey = new SecureBuffer(keySize);
+            EncryptionKey = new SecureBuffer(keySize);
+            HmacKey = new SecureBuffer(FipsCrypto.FipsEnabled ? 32 : CryptoConstants.HmacLength);
+        }
+
+        public SecureBuffer PasswordHash { get; }
+        public SecureBuffer IntermediateKey { get; }
+        public SecureBuffer MasterKey { get; }
+        public SecureBuffer EncryptionKey { get; }
+        public SecureBuffer HmacKey { get; }
+
+        public void Dispose()
+        {
+            PasswordHash.Dispose();
+            IntermediateKey.Dispose();
+            MasterKey.Dispose();
+            EncryptionKey.Dispose();
+            HmacKey.Dispose();
         }
     }
 
@@ -447,7 +689,7 @@ public sealed partial class Register : UserControl
     {
         if (e.KeyCode == Keys.Back && _passwordBuffer.Length > 0)
         {
-            _confirmPasswordBuffer.RemoveAt(_passwordBuffer.Length - 1);
+            _confirmPasswordBuffer.RemoveAt(_confirmPasswordBuffer.Length - 1);
             UpdateMaskedText();
             e.Handled = true; // Prevent default backspace (removes actual char)
         }

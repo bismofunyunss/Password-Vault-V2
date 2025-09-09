@@ -19,11 +19,17 @@ public static class UserFileManager
             userName, $"{userName}.user");
     }
 
+    public static string GetUserFolder(string userName)
+    {
+        return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Password Vault",
+            "Users",
+            userName);
+    } 
     /// <summary>
-    /// Gets the full file path of the vault file for the specified username.
-    /// </summary>
-    /// <param name="userName">The username to get the vault file path for.</param>
-    /// <returns>The full path to the user's .vault file in the local application data directory.</returns>
+         /// Gets the full file path of the vault file for the specified username.
+         /// </summary>
+         /// <param name="userName">The username to get the vault file path for.</param>
+         /// <returns>The full path to the user's .vault file in the local application data directory.</returns>
     public static string GetUserVault(string userName)
     {
         return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Password Vault",
