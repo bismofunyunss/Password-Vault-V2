@@ -338,7 +338,7 @@ public sealed partial class Register : UserControl
             var userFile = IO.BuildUserFile(
                 derivedKeys.PasswordHash.AsSpan().ToArray(),
                 uuid,
-                Encoding.UTF8.GetBytes(emailTxt.Text), encryptedMasterKey);
+                encryptedMasterKey);
 
             var encryptedUserFile = await EncryptFile(
                 userFile,
