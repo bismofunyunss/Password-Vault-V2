@@ -446,7 +446,7 @@ public sealed partial class PasswordVault : Form
             throw new UnauthorizedAccessException("Invalid password.");
     }
 
-    private void ValidateHmacFips(byte[] encryptedFile, byte[] hmacKey, byte[] expectedHmac)
+    private static void ValidateHmacFips(byte[] encryptedFile, byte[] hmacKey, byte[] expectedHmac)
     {
         // Use HMAC-SHA256 for FIPS approval
         using var hmac = new HMACSHA256(hmacKey);
@@ -535,6 +535,16 @@ public sealed partial class PasswordVault : Form
             StatusOutputLabel.ForeColor = Color.LimeGreen;
             StatusOutputLabel.Text = "Access granted";
 
+            try
+            {
+                await LoginAlertManager.SendLoginAlertAsync(username);
+            }
+            catch (Exception emailEx)
+            {
+                // Log but don't block login
+                ErrorLogging.ErrorLog(emailEx);
+            }
+
             if (!Vars.TokenSource.IsCancellationRequested)
                 await Vars.TokenSource.CancelAsync();
 
@@ -543,7 +553,7 @@ public sealed partial class PasswordVault : Form
             Vars.TokenSource.Dispose(); // Always dispose before replacing
             Vars.TokenSource = new CancellationTokenSource();
 
-            UserLog.LogUser(username);
+            UserFileManager.CurrentLoggedInUser = username;
 
             MessageBox.Show("Login successful. Loading vault...", "Login success.",
                 MessageBoxButtons.OK, MessageBoxIcon.Information);

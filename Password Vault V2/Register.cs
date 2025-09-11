@@ -1,9 +1,9 @@
-﻿using System.Buffers;
+﻿using OtpNet;
+using System.Buffers;
 using System.Diagnostics;
 using System.Drawing.Drawing2D;
 using System.Security.Cryptography;
 using System.Text;
-using OtpNet;
 using static Password_Vault_V2.Crypto;
 
 namespace Password_Vault_V2;
@@ -500,6 +500,7 @@ public sealed partial class Register : UserControl
     /// </remarks>
     private async void CreateAccountBtn_Click(object sender, EventArgs e)
     {
+
         if (string.IsNullOrEmpty(userTxt.Text))
             throw new Exception("Username textbox was empty.");
         if (_passwordBuffer.Length == 0)
@@ -534,6 +535,10 @@ public sealed partial class Register : UserControl
                 MessageBoxIcon.Warning);
 
             CryptographicOperations.ZeroMemory(userSecret);
+
+            // Update label to idle since verification failed
+            outputLbl.Text = "Idle";
+            outputLbl.ForeColor = Color.White;
             return; // stop account creation
         }
 
@@ -550,6 +555,21 @@ public sealed partial class Register : UserControl
                 await RegisterAsync(username, passwordBytes, confirmPasswordBytes);
             else
                 await FipsModeRegisterAsync(username, passwordBytes, confirmPasswordBytes, username);
+
+            LoginAlertManager.RegisterUserEmail(userTxt.Text, emailBox.Text);
+
+            // ✅ Update label on success
+            outputLbl.Text = "Created account";
+            outputLbl.ForeColor = Color.LimeGreen;
+
+            await LoginAlertManager.SendLoginAlertAsync(userTxt.Text);
+        }
+        catch
+        {
+            // Update label to idle if registration fails
+            outputLbl.Text = "Idle";
+            outputLbl.ForeColor = Color.White;
+            throw;
         }
         finally
         {
@@ -557,10 +577,7 @@ public sealed partial class Register : UserControl
             _confirmPasswordBuffer.Dispose();
             CryptoUtilities.ClearMemoryNative(passwordBytes, confirmPasswordBytes);
         }
-
-        MessageBox.Show("Account created successfully!", "Success", MessageBoxButtons.OK, MessageBoxIcon.Information);
     }
-
 
     private void Register_Paint(object sender, PaintEventArgs e)
     {
@@ -701,4 +718,9 @@ public sealed partial class Register : UserControl
     }
 
     #endregion TextboxBehavior
+
+    private void RegisterBox_Enter(object sender, EventArgs e)
+    {
+
+    }
 }

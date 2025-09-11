@@ -203,6 +203,105 @@ public static class IO
         }
     }
 
+public static class SecureFileHandler
+{
+    /// <summary>
+    /// Securely processes a large file. On HDD, uses multi-pass overwrite. On SSD, uses AES-GCM encryption.
+    /// </summary>
+    public static async Task SecurelyProcessLargeFileAsync(string path, bool isSSD, int passes = 3, int bufferSize = 64 * 1024)
+    {
+        if (string.IsNullOrWhiteSpace(path) || !File.Exists(path))
+            return;
+
+        if (isSSD)
+            await WipeWithAesGcmAsync(path, bufferSize);
+        else
+            await WipeWithRandomAsync(path, passes, bufferSize);
+    }
+
+    /// <summary>
+    /// Multi-pass overwrite for HDDs.
+    /// </summary>
+    private static async Task WipeWithRandomAsync(string path, int passes, int bufferSize)
+    {
+        var fileInfo = new FileInfo(path);
+        long length = fileInfo.Length;
+        byte[] buffer = new byte[bufferSize];
+
+        for (int pass = 0; pass < passes; pass++)
+        {
+            using var fs = new FileStream(path, FileMode.Open, FileAccess.Write, FileShare.None, bufferSize, useAsync: true);
+            fs.Position = 0;
+
+            RandomNumberGenerator rng = RandomNumberGenerator.Create();
+
+            long remaining = length;
+            while (remaining > 0)
+            {
+                int toWrite = (int)Math.Min(buffer.Length, remaining);
+                if (pass == passes - 1)
+                    Array.Clear(buffer, 0, buffer.Length); // last pass: zeros
+                else
+                    rng.GetBytes(buffer, 0, toWrite);
+
+                await fs.WriteAsync(buffer.AsMemory(0, toWrite)).ConfigureAwait(false);
+                remaining -= toWrite;
+            }
+
+            await fs.FlushAsync().ConfigureAwait(false);
+        }
+
+        // Delete file
+        File.Delete(path);
+    }
+
+    /// <summary>
+    /// AES-GCM single-pass encryption for SSDs.
+    /// </summary>
+    private static async Task WipeWithAesGcmAsync(string path, int bufferSize)
+    {
+        string tempPath = path + ".enc";
+        byte[] key = RandomNumberGenerator.GetBytes(32); // 256-bit key
+        byte[] nonce = RandomNumberGenerator.GetBytes(12); // 96-bit GCM nonce
+        byte[] tag = new byte[16];
+
+        try
+        {
+            using var input = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.None, bufferSize, useAsync: true);
+            using var output = new FileStream(tempPath, FileMode.Create, FileAccess.Write, FileShare.None, bufferSize, useAsync: true);
+
+            using var aesGcm = new AesGcm(key);
+
+            byte[] buffer = new byte[bufferSize];
+            long position = 0;
+
+            int read;
+            while ((read = await input.ReadAsync(buffer.AsMemory(0, buffer.Length))) > 0)
+            {
+                byte[] ciphertext = new byte[read];
+                byte[] tagBuffer = new byte[16];
+
+                aesGcm.Encrypt(nonce, buffer.AsSpan(0, read), ciphertext, tagBuffer, new byte[0]);
+                await output.WriteAsync(ciphertext.AsMemory(0, ciphertext.Length));
+                position += read;
+            }
+        }
+        finally
+        {
+            // Zero key and nonce
+            CryptographicOperations.ZeroMemory(key);
+            CryptographicOperations.ZeroMemory(nonce);
+        }
+
+        // Delete original file after encryption
+        File.Delete(path);
+
+        // Optionally rename encrypted file to original name (so it looks "wiped")
+        File.Move(tempPath, path);
+    }
+}
+
+
     private static void FlushFileSystem(string path)
     {
         const uint GENERIC_WRITE = 0x40000000;

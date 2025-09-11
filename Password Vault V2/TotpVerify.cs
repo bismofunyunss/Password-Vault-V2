@@ -17,7 +17,7 @@ internal partial class TotpVerify : Form
         QRCodeGenerator qrGenerator = new QRCodeGenerator();
         QRCodeData qrCodeData = qrGenerator.CreateQrCode(otpauthUrl, QRCodeGenerator.ECCLevel.Q);
         QRCode qrCode = new QRCode(qrCodeData);
-        Bitmap qrCodeImage = qrCode.GetGraphic(2);
+        Bitmap qrCodeImage = qrCode.GetGraphic(4);
         QRCodeImg.Image = qrCodeImage;
 
         // Ensure that if the user closes the form without success, we treat it as failure

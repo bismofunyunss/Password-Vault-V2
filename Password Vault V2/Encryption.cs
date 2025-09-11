@@ -12,6 +12,7 @@ public partial class Encryption : UserControl
 {
     private static CancellationTokenSource _encryptAnimationSource = new();
     private static CancellationTokenSource _decryptAnimationSource = new();
+    private static CancellationTokenSource _savingFileAnimationSource = new();
 
     public Encryption()
     {
@@ -166,6 +167,7 @@ public partial class Encryption : UserControl
                 throw new InvalidOperationException("There is no data to write to the file.");
 
             FileVars.Result.Position = 0;
+            await Animations.AnimateLabel(FileStatusLbl, "Saving", _savingFileAnimationSource.Token);
             await IO.WriteFileStreamAsync(selectedFileName, FileVars.Result).ConfigureAwait(false);
             await IO.SecurelyWipeFileAsync(FileVars.LoadedFile);
 
@@ -174,6 +176,7 @@ public partial class Encryption : UserControl
                 FileOutputLbl.Text = "File saved successfully.";
                 FileOutputLbl.ForeColor = Color.LimeGreen;
             });
+
 
             UIThreadHelper.SafeInvoke(this,
                 () =>
@@ -187,7 +190,7 @@ public partial class Encryption : UserControl
             FileVars.Result?.Dispose();
 
             UIThreadHelper.SafeInvoke(FileSizeNumLbl,
-                () => { FileSizeNumLbl.Text = FormatFileSize(FileVars.FileSize); });
+                () => { FileSizeNumLbl.Text = FormatFileSize(0); });
 
             FileVars.Result = null;
             FileVars.FileSize = 0;
@@ -202,6 +205,7 @@ public partial class Encryption : UserControl
         }
         finally
         {
+            await ResetSavingAnimationTokenAsync();
             UIThreadHelper.SafeInvoke(FileOutputLbl, () =>
             {
                 FileOutputLbl.Text = "Idle...";
@@ -227,7 +231,7 @@ public partial class Encryption : UserControl
 
         // Parse header
         var sigLen = CryptoConstants.FileSignature.Length;
-        var saltLen = CryptoConstants.SaltSize;
+        var saltLen = Settings.Default.FIPS ? 32 : CryptoConstants.SaltSize;
         var headerLen = sigLen + saltLen + 1;
 
         var header = new byte[headerLen];
@@ -258,15 +262,33 @@ public partial class Encryption : UserControl
         var tempDecryptedPath = Path.GetTempFileName();
 
         var masterKey = MasterKey.GetKey();
-        var fileKey = Crypto.HKDF.HkdfDerivePinned(masterKey, salt, "file key"u8.ToArray(), CryptoConstants.KeySize);
+        byte[] fileKey;
+        if (!Settings.Default.FIPS)
+        {
+            fileKey = Crypto.HKDF.HkdfDerivePinned(masterKey, salt, "file key"u8.ToArray(), CryptoConstants.KeySize);
+        }
+        else
+        {
+            // IMPORTANT: derive using the same salt read from the file header
+            fileKey = FipsCrypto.Hkdf.DeriveKey(masterKey, salt, "file key"u8.ToArray(), CryptoConstants.KeySize);
+        }
 
         try
         {
             await using (var output =
                          new FileStream(tempDecryptedPath, FileMode.Create, FileAccess.Write, FileShare.None))
             {
-                await DecryptFile(input, output, fileKey, salt,
-                    uiProgress).ConfigureAwait(false);
+                if (!Settings.Default.FIPS)
+                {
+                    // Non-FIPS cascade decryption
+                    await DecryptFile(input, output, fileKey, salt, uiProgress).ConfigureAwait(false);
+                }
+                else
+                {
+                    // FIPS AES-GCM decryption: the decryptor expects to find an 8-byte prefix at `input.Position`
+                    await FipsCrypto.FipsAesGcmParallel.DecryptFileAesGcmParallelAsync(input, output, fileKey, uiProgress).ConfigureAwait(false);
+                }
+
                 await output.FlushAsync().ConfigureAwait(false);
             }
 
@@ -283,8 +305,8 @@ public partial class Encryption : UserControl
     }
 
 
-    private static async Task<bool> PerformEncryptionAsync(
-        IProgress<double> progress)
+
+    private static async Task<bool> PerformEncryptionAsync(IProgress<double> progress)
     {
         if (string.IsNullOrEmpty(UserFileManager.CurrentLoggedInUser))
             throw new InvalidOperationException("No user is currently logged in.");
@@ -299,83 +321,92 @@ public partial class Encryption : UserControl
             throw new InvalidOperationException("File is already encrypted. Please decrypt or export it first.");
 
         var inputStream = FileVars.Result ?? throw new InvalidOperationException("No input stream.");
-
         inputStream.Position = 0;
 
+        // Peek header to prevent double-encryption
         if (inputStream.Length >= CryptoConstants.FileSignature.Length)
         {
             var header = new byte[CryptoConstants.FileSignature.Length];
             var bytesRead = await inputStream.ReadAsync(header, 0, header.Length).ConfigureAwait(false);
-
             if (bytesRead != header.Length)
                 throw new IOException("Failed to read the full file header.");
 
             if (header.SequenceEqual(CryptoConstants.FileSignature))
                 throw new Exception("File is already encrypted. Unable to encrypt again. Please export the file.");
 
-            inputStream.Position = 0; // Reset after peek
+            inputStream.Position = 0;
         }
 
-        var salt = CryptoUtilities.RndByteSized(CryptoConstants.SaltSize);
+        // Choose salt length based on encryption mode
+        var saltLength = Settings.Default.FIPS ? 32 : CryptoConstants.SaltSize;
+        var salt = CryptoUtilities.RndByteSized(saltLength);
         var masterKey = MasterKey.GetKey();
-        var fileKey = Crypto.HKDF.HkdfDerivePinned(masterKey, salt, "file key"u8.ToArray(), CryptoConstants.KeySize);
+
+        byte[] fileKey;
+        if (!Settings.Default.FIPS)
+        {
+            // Non-FIPS: keep your existing derivation
+            fileKey = Crypto.HKDF.HkdfDerivePinned(masterKey, salt, "file key"u8.ToArray(), CryptoConstants.KeySize);
+        }
+        else
+        {
+            // FIPS: derive key from header salt
+            fileKey = FipsCrypto.Hkdf.DeriveKey(masterKey, salt, "file key"u8.ToArray(), CryptoConstants.KeySize);
+        }
 
         try
         {
-            var tempEncryptedPath = Path.GetTempFileName();
-
-            await using var tempEncryptedStream = new FileStream(
-                tempEncryptedPath,
+            // Create final output file immediately for FIPS encryption
+            var finalTempPath = Path.GetTempFileName();
+            var finalStream = new FileStream(
+                finalTempPath,
                 FileMode.Create,
                 FileAccess.ReadWrite,
                 FileShare.None,
-                4096,
-                FileOptions.DeleteOnClose);
+                4096);
 
-            await EncryptFile(
-                inputStream,
-                tempEncryptedStream,
-                fileKey,
-                salt, progress
-            ).ConfigureAwait(false);
+            // Write header first
+            var ext = Path.GetExtension(FileVars.LoadedFile) ?? string.Empty;
+            var extBytes = Encoding.UTF8.GetBytes(ext);
+            if (extBytes.Length > 255) throw new InvalidOperationException("Extension too long.");
+            var extLength = (byte)extBytes.Length;
 
-            await tempEncryptedStream.FlushAsync().ConfigureAwait(false);
-            tempEncryptedStream.Position = 0;
+            await finalStream.WriteAsync(CryptoConstants.FileSignature).ConfigureAwait(false);
+            await finalStream.WriteAsync(salt).ConfigureAwait(false);
+            await finalStream.WriteAsync(new[] { extLength }, 0, 1).ConfigureAwait(false);
+            await finalStream.WriteAsync(extBytes).ConfigureAwait(false);
 
-            var finalTempPath = Path.GetTempFileName();
-
-            await using (var finalStream = new FileStream(
-                             finalTempPath,
-                             FileMode.Create,
-                             FileAccess.ReadWrite,
-                             FileShare.None,
-                             4096))
+            if (!Settings.Default.FIPS)
             {
-                var ext = Path.GetExtension(FileVars.LoadedFile) ?? string.Empty;
-                var extBytes = Encoding.UTF8.GetBytes(ext);
-                var extLength = (byte)extBytes.Length;
+                // Non-FIPS cascade encryption: use a temp stream as before
+                var tempEncryptedPath = Path.GetTempFileName();
+                await using var tempEncryptedStream = new FileStream(
+                    tempEncryptedPath,
+                    FileMode.Create,
+                    FileAccess.ReadWrite,
+                    FileShare.None,
+                    4096,
+                    FileOptions.DeleteOnClose);
 
-                await finalStream.WriteAsync(CryptoConstants.FileSignature).ConfigureAwait(false);
-                await finalStream.WriteAsync(salt).ConfigureAwait(false);
-                await finalStream.WriteAsync(new[] { extLength }, 0, 1).ConfigureAwait(false);
-                await finalStream.WriteAsync(extBytes).ConfigureAwait(false);
-
+                await EncryptFile(inputStream, tempEncryptedStream, fileKey, salt, progress).ConfigureAwait(false);
+                tempEncryptedStream.Position = 0;
                 await tempEncryptedStream.CopyToAsync(finalStream).ConfigureAwait(false);
-                await finalStream.FlushAsync().ConfigureAwait(false);
-                finalStream.Position = 0;
+            }
+            else
+            {
+                // FIPS AES-GCM encryption: write ciphertext directly after header
+                await FipsCrypto.FipsAesGcmParallel.EncryptFileAesGcmParallelAsync(inputStream, finalStream, fileKey, progress).ConfigureAwait(false);
             }
 
+            // Flush & rewind
+            await finalStream.FlushAsync();
+            finalStream.Position = 0;
+
+            // Dispose old global result
             FileVars.Result?.Dispose();
 
-            FileVars.Result = new FileStream(
-                finalTempPath,
-                FileMode.Open,
-                FileAccess.Read,
-                FileShare.None,
-                4096,
-                FileOptions.DeleteOnClose);
-
-            FileVars.Result.Position = 0;
+            // Assign global variable to keep the stream open
+            FileVars.Result = finalStream;
         }
         finally
         {
@@ -384,7 +415,6 @@ public partial class Encryption : UserControl
 
         return true;
     }
-
 
     private async void DecryptBtn_Click(object sender, EventArgs e)
     {
@@ -496,6 +526,26 @@ public partial class Encryption : UserControl
         try
         {
             if (_decryptAnimationSource != null)
+            {
+                await _decryptAnimationSource.CancelAsync();
+                _decryptAnimationSource.Dispose();
+            }
+        }
+        catch
+        {
+            /* Ignore cleanup exceptions */
+        }
+        finally
+        {
+            _decryptAnimationSource = new CancellationTokenSource();
+        }
+    }
+
+    private static async Task ResetSavingAnimationTokenAsync()
+    {
+        try
+        {
+            if (_savingFileAnimationSource != null)
             {
                 await _decryptAnimationSource.CancelAsync();
                 _decryptAnimationSource.Dispose();

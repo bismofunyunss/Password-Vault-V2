@@ -28,8 +28,12 @@ namespace Password_Vault_V2
             statusLbl = new Label();
             outputLbl = new Label();
             RegisterBox = new GroupBox();
+            emailBox = new TextBox();
+            emailLbl = new Label();
+            pictureBox1 = new PictureBox();
             WelcomeLabel = new Label();
             RegisterBox.SuspendLayout();
+            ((ISupportInitialize)pictureBox1).BeginInit();
             SuspendLayout();
             // 
             // userLbl
@@ -106,7 +110,7 @@ namespace Password_Vault_V2
             CreateAccountBtn.ForeColor = Color.WhiteSmoke;
             CreateAccountBtn.Image = (Image)resources.GetObject("CreateAccountBtn.Image");
             CreateAccountBtn.ImageAlign = ContentAlignment.MiddleLeft;
-            CreateAccountBtn.Location = new Point(6, 220);
+            CreateAccountBtn.Location = new Point(6, 285);
             CreateAccountBtn.Name = "CreateAccountBtn";
             CreateAccountBtn.Size = new Size(438, 44);
             CreateAccountBtn.TabIndex = 5;
@@ -118,7 +122,7 @@ namespace Password_Vault_V2
             // 
             statusLbl.AutoSize = true;
             statusLbl.Font = new Font("Century Gothic", 11F);
-            statusLbl.Location = new Point(8, 335);
+            statusLbl.Location = new Point(8, 489);
             statusLbl.Name = "statusLbl";
             statusLbl.Size = new Size(94, 25);
             statusLbl.TabIndex = 8;
@@ -128,7 +132,7 @@ namespace Password_Vault_V2
             // 
             outputLbl.AutoSize = true;
             outputLbl.Font = new Font("Century Gothic", 11F);
-            outputLbl.Location = new Point(106, 335);
+            outputLbl.Location = new Point(106, 489);
             outputLbl.Name = "outputLbl";
             outputLbl.Size = new Size(71, 25);
             outputLbl.TabIndex = 9;
@@ -137,6 +141,9 @@ namespace Password_Vault_V2
             // RegisterBox
             // 
             RegisterBox.BackColor = Color.FromArgb(30, 30, 30);
+            RegisterBox.Controls.Add(emailBox);
+            RegisterBox.Controls.Add(emailLbl);
+            RegisterBox.Controls.Add(pictureBox1);
             RegisterBox.Controls.Add(WelcomeLabel);
             RegisterBox.Controls.Add(outputLbl);
             RegisterBox.Controls.Add(statusLbl);
@@ -152,17 +159,46 @@ namespace Password_Vault_V2
             RegisterBox.Location = new Point(12, 16);
             RegisterBox.Name = "RegisterBox";
             RegisterBox.Padding = new Padding(5);
-            RegisterBox.Size = new Size(455, 443);
+            RegisterBox.Size = new Size(467, 522);
             RegisterBox.TabIndex = 0;
             RegisterBox.TabStop = false;
             RegisterBox.Text = "Register Account";
+            RegisterBox.Enter += RegisterBox_Enter;
+            // 
+            // emailBox
+            // 
+            emailBox.BackColor = Color.FromArgb(30, 30, 30);
+            emailBox.ForeColor = Color.White;
+            emailBox.Location = new Point(8, 245);
+            emailBox.Name = "emailBox";
+            emailBox.Size = new Size(436, 34);
+            emailBox.TabIndex = 16;
+            // 
+            // emailLbl
+            // 
+            emailLbl.AutoSize = true;
+            emailLbl.Font = new Font("Century Gothic", 11F);
+            emailLbl.Location = new Point(8, 217);
+            emailLbl.Name = "emailLbl";
+            emailLbl.Size = new Size(71, 25);
+            emailLbl.TabIndex = 15;
+            emailLbl.Text = "Email";
+            // 
+            // pictureBox1
+            // 
+            pictureBox1.Image = (Image)resources.GetObject("pictureBox1.Image");
+            pictureBox1.Location = new Point(324, 383);
+            pictureBox1.Name = "pictureBox1";
+            pictureBox1.Size = new Size(122, 131);
+            pictureBox1.TabIndex = 13;
+            pictureBox1.TabStop = false;
             // 
             // WelcomeLabel
             // 
             WelcomeLabel.AutoSize = true;
             WelcomeLabel.Font = new Font("Century Gothic", 11F);
             WelcomeLabel.ForeColor = Color.White;
-            WelcomeLabel.Location = new Point(8, 299);
+            WelcomeLabel.Location = new Point(6, 464);
             WelcomeLabel.Name = "WelcomeLabel";
             WelcomeLabel.Size = new Size(169, 25);
             WelcomeLabel.TabIndex = 12;
@@ -176,10 +212,11 @@ namespace Password_Vault_V2
             Controls.Add(RegisterBox);
             DoubleBuffered = true;
             Name = "Register";
-            Size = new Size(470, 472);
+            Size = new Size(470, 541);
             Paint += Register_Paint;
             RegisterBox.ResumeLayout(false);
             RegisterBox.PerformLayout();
+            ((ISupportInitialize)pictureBox1).EndInit();
             ResumeLayout(false);
         }
 
@@ -194,6 +231,9 @@ namespace Password_Vault_V2
         private GroupBox RegisterBox;
         public Label WelcomeLabel;
         public Button CreateAccountBtn;
+        private PictureBox pictureBox1;
+        private Label emailLbl;
+        private TextBox emailBox;
     }
 
     #endregion
