@@ -1,6 +1,7 @@
 ﻿using OtpNet;
 using QRCoder;
-
+using System.Drawing;
+using System.Windows.Forms;
 namespace Password_Vault_V2;
 
 internal partial class TotpVerify : Form
@@ -17,8 +18,27 @@ internal partial class TotpVerify : Form
         QRCodeGenerator qrGenerator = new QRCodeGenerator();
         QRCodeData qrCodeData = qrGenerator.CreateQrCode(otpauthUrl, QRCodeGenerator.ECCLevel.Q);
         QRCode qrCode = new QRCode(qrCodeData);
-        Bitmap qrCodeImage = qrCode.GetGraphic(4);
-        QRCodeImg.Image = qrCodeImage;
+
+        // Determine size for square QR code inside PictureBox
+        int qrPixelCount = Math.Min(QRCodeImg.Width, QRCodeImg.Height);
+        int pixelsPerModule = qrPixelCount / qrCodeData.ModuleMatrix.Count;
+
+        // Generate QR code bitmap
+        Bitmap qrBitmap = qrCode.GetGraphic(pixelsPerModule);
+
+        // Optional: center inside PictureBox if it’s non-square
+        Bitmap finalBitmap = new Bitmap(QRCodeImg.Width, QRCodeImg.Height);
+        using (Graphics g = Graphics.FromImage(finalBitmap))
+        {
+            g.Clear(Color.FromArgb(30, 30, 30));
+            int xOffset = (finalBitmap.Width - qrBitmap.Width) / 2;
+            int yOffset = (finalBitmap.Height - qrBitmap.Height) / 2;
+            g.DrawImage(qrBitmap, xOffset, yOffset, qrBitmap.Width, qrBitmap.Height);
+        }
+
+        // Assign to PictureBox
+        QRCodeImg.Image = finalBitmap;
+        QRCodeImg.SizeMode = PictureBoxSizeMode.Normal;
 
         // Ensure that if the user closes the form without success, we treat it as failure
         this.FormClosing += (s, e) =>
@@ -27,7 +47,6 @@ internal partial class TotpVerify : Form
                 DialogResult = DialogResult.Cancel;
         };
     }
-
     private void confirmBtn_Click(object sender, EventArgs e)
     {
         var totp = new Totp(secret);
