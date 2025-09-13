@@ -1,4 +1,5 @@
-﻿using System.Globalization;
+﻿using System;
+using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
 using static Password_Vault_V2.Crypto;
@@ -46,11 +47,14 @@ public partial class Encryption : UserControl
 
     private async void ImportFileBtn_Click(object sender, EventArgs e)
     {
+        if (string.IsNullOrEmpty(UserFileManager.CurrentLoggedInUser))
+        {
+            MessageBox.Show("No user is currently logged in.", "Warning", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            return;
+        }
+
         try
         {
-            if (string.IsNullOrEmpty(UserFileManager.CurrentLoggedInUser))
-                throw new InvalidOperationException("No user is currently logged in.");
-
             using var openFileDialog = new OpenFileDialog
             {
                 Filter = "All Files (*.*)|*.*",
@@ -69,144 +73,45 @@ public partial class Encryption : UserControl
             var selectedFileName = openFileDialog.FileName;
             var fileInfo = new FileInfo(selectedFileName);
 
+            if (fileInfo.Length == 0)
+            {
+                MessageBox.Show("The file is empty.", "Warning", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+
+            // Open file safely
+            var fileStream = IO.OpenFileStream(selectedFileName);
+            if (fileStream == null)
+            {
+                MessageBox.Show("Unable to open the file.", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                return;
+            }
+
+            FileVars.Result = fileStream;
             FileVars.FileOpened = true;
             FileVars.LoadedFile = selectedFileName;
-            FileVars.Result = IO.OpenFileStream(selectedFileName);
-
-            // Validate that the file has been read correctly
-            if (FileVars.Result.Length == 0)
-                throw new Exception("The file is empty.");
-
             FileVars.FileExtension = fileInfo.Extension.ToLower(CultureInfo.CurrentCulture);
             FileVars.FileSize = fileInfo.Length;
-
-            FileSizeNumLbl.Text = FormatFileSize(FileVars.FileSize);
-            FileOutputLbl.Text = "File opened.";
-            FileOutputLbl.ForeColor = Color.LimeGreen;
-            FileVars.IsDecrypted = false;
             FileVars.IsEncrypted = false;
+            FileVars.IsDecrypted = false;
 
-            MessageBox.Show("File opened successfully.", "Opened successfully", MessageBoxButtons.OK,
-                MessageBoxIcon.Information);
-        }
-        catch (UnauthorizedAccessException ex)
-        {
-            MessageBox.Show(ex.Message, "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
-            ErrorLogging.ErrorLog(ex);
-        }
-        catch (Exception ex)
-        {
-            MessageBox.Show(ex.Message, "Error", MessageBoxButtons.OK,
-                MessageBoxIcon.Error);
-            ErrorLogging.ErrorLog(ex);
-        }
-        finally
-        {
-            FileOutputLbl.Text = "Idle...";
-            FileOutputLbl.ForeColor = Color.WhiteSmoke;
-        }
-    }
-
-    private async void ExportFileBtn_Click(object sender, EventArgs e)
-    {
-        try
-        {
-            if (string.IsNullOrEmpty(UserFileManager.CurrentLoggedInUser))
-                throw new InvalidOperationException("No user is currently logged in.");
-
-            if (!FileVars.FileOpened)
-                throw new InvalidOperationException("No file is opened.");
-
-            using var saveFileDialog = new SaveFileDialog();
-
-            // Determine file extension and filter
-            string? extension;
-            string filter;
-
-            if (FileVars.IsEncrypted)
+            UIThreadHelper.SafeInvoke(this, () =>
             {
-                extension = ".encrypted";
-                filter = "Encrypted files (*.encrypted)|*.encrypted";
-            }
-            else
-            {
-                // Use original extension from decrypted metadata if available
-                extension = FileVars.OriginalExtension;
-                if (string.IsNullOrEmpty(extension))
-                {
-                    filter = "All Files (*.*)|*.*";
-                }
-                else
-                {
-                    var extNoDot = extension.TrimStart('.');
-                    filter = $"{extNoDot.ToUpper()} files (*{extension})|*{extension}|All Files (*.*)|*.*";
-                }
-            }
-
-            saveFileDialog.Filter = filter;
-            saveFileDialog.DefaultExt = extension;
-            saveFileDialog.FilterIndex = 1;
-            saveFileDialog.ShowHiddenFiles = true;
-            saveFileDialog.CheckFileExists = false;
-            saveFileDialog.CheckPathExists = false;
-            saveFileDialog.RestoreDirectory = true;
-            saveFileDialog.InitialDirectory = Environment.GetFolderPath(Environment.SpecialFolder.Desktop);
-
-            if (saveFileDialog.ShowDialog() != DialogResult.OK)
-                return;
-
-            var selectedFileName = saveFileDialog.FileName;
-
-            // Ensure proper extension if user didn't add one manually
-            if (string.IsNullOrEmpty(Path.GetExtension(selectedFileName)))
-                selectedFileName = Path.ChangeExtension(selectedFileName, extension);
-            else if (!selectedFileName.EndsWith(extension, StringComparison.OrdinalIgnoreCase))
-                selectedFileName = Path.ChangeExtension(selectedFileName, extension);
-
-            if (FileVars.Result?.Length == 0)
-                throw new InvalidOperationException("There is no data to write to the file.");
-
-            FileVars.Result.Position = 0;
-            await Animations.AnimateLabel(FileStatusLbl, "Saving", _savingFileAnimationSource.Token);
-            await IO.WriteFileStreamAsync(selectedFileName, FileVars.Result).ConfigureAwait(false);
-            await IO.SecurelyWipeFileAsync(FileVars.LoadedFile);
-
-            UIThreadHelper.SafeInvoke(FileOutputLbl, () =>
-            {
-                FileOutputLbl.Text = "File saved successfully.";
+                FileSizeNumLbl.Text = FormatFileSize(FileVars.FileSize);
+                FileOutputLbl.Text = "File opened.";
                 FileOutputLbl.ForeColor = Color.LimeGreen;
             });
 
-
-            UIThreadHelper.SafeInvoke(this,
-                () =>
-                {
-                    MessageBox.Show(this, "File saved successfully.", "Saved successfully", MessageBoxButtons.OK,
-                        MessageBoxIcon.Information);
-                });
-
-            // Cleanup state
-            FileVars.FileOpened = false;
-            FileVars.Result?.Dispose();
-
-            UIThreadHelper.SafeInvoke(FileSizeNumLbl,
-                () => { FileSizeNumLbl.Text = FormatFileSize(0); });
-
-            FileVars.Result = null;
-            FileVars.FileSize = 0;
-            FileVars.IsDecrypted = false;
-            FileVars.IsEncrypted = false;
+            MessageBox.Show("File opened successfully.", "Success", MessageBoxButtons.OK, MessageBoxIcon.Information);
         }
         catch (Exception ex)
         {
-            UIThreadHelper.SafeInvoke(this,
-                () => { MessageBox.Show(this, ex.Message, "Error", MessageBoxButtons.OK, MessageBoxIcon.Error); });
             ErrorLogging.ErrorLog(ex);
+            MessageBox.Show("An unexpected error occurred while opening the file.", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
         }
         finally
         {
-            await ResetSavingAnimationTokenAsync();
-            UIThreadHelper.SafeInvoke(FileOutputLbl, () =>
+            UIThreadHelper.SafeInvoke(this, () =>
             {
                 FileOutputLbl.Text = "Idle...";
                 FileOutputLbl.ForeColor = Color.WhiteSmoke;
@@ -214,6 +119,105 @@ public partial class Encryption : UserControl
         }
     }
 
+    private async void ExportFileBtn_Click(object sender, EventArgs e)
+    {
+        if (string.IsNullOrEmpty(UserFileManager.CurrentLoggedInUser))
+        {
+            MessageBox.Show("No user is currently logged in.", "Warning", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            return;
+        }
+
+        if (!FileVars.FileOpened || FileVars.Result == null)
+        {
+            MessageBox.Show("No file is loaded for export.", "Warning", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            return;
+        }
+
+        Timer? animationToken = null;
+
+        try
+        {
+            using var saveFileDialog = new SaveFileDialog
+            {
+                FilterIndex = 1,
+                ShowHiddenFiles = true,
+                CheckFileExists = false,
+                CheckPathExists = false,
+                RestoreDirectory = true,
+                InitialDirectory = Environment.GetFolderPath(Environment.SpecialFolder.Desktop)
+            };
+
+            // Determine extension and filter
+            string extension;
+            string filter;
+            if (FileVars.IsEncrypted)
+            {
+                extension = ".encrypted";
+                filter = "Encrypted files (*.encrypted)|*.encrypted";
+            }
+            else
+            {
+                extension = string.IsNullOrEmpty(FileVars.OriginalExtension) ? ".dat" : FileVars.OriginalExtension;
+                filter = string.IsNullOrEmpty(FileVars.OriginalExtension)
+                    ? "All Files (*.*)|*.*"
+                    : $"{extension.TrimStart('.').ToUpper()} files (*{extension})|*{extension}|All Files (*.*)|*.*";
+            }
+
+            saveFileDialog.Filter = filter;
+            saveFileDialog.DefaultExt = extension;
+
+            if (saveFileDialog.ShowDialog() != DialogResult.OK)
+                return;
+
+            var selectedFileName = saveFileDialog.FileName;
+            if (string.IsNullOrEmpty(Path.GetExtension(selectedFileName)) ||
+                !selectedFileName.EndsWith(extension, StringComparison.OrdinalIgnoreCase))
+            {
+                selectedFileName = Path.ChangeExtension(selectedFileName, extension);
+            }
+
+            // Reset stream position before writing
+            FileVars.Result.Position = 0;
+
+            await Animations.AnimateLabel(FileStatusLbl, "Saving", _savingFileAnimationSource.Token);
+
+            await IO.WriteFileStreamAsync(selectedFileName, FileVars.Result).ConfigureAwait(false);
+            await IO.SecurelyWipeFileAsync(FileVars.LoadedFile);
+
+            UIThreadHelper.SafeInvoke(this, () =>
+            {
+                FileOutputLbl.Text = "File saved successfully.";
+                FileOutputLbl.ForeColor = Color.LimeGreen;
+                FileSizeNumLbl.Text = FormatFileSize(0);
+                MessageBox.Show("File saved successfully.", "Success", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            });
+
+            // Cleanup
+            FileVars.Result.Dispose();
+            FileVars.Result = null;
+            FileVars.FileOpened = false;
+            FileVars.FileSize = 0;
+            FileVars.IsEncrypted = false;
+            FileVars.IsDecrypted = false;
+        }
+        catch (Exception ex)
+        {
+            ErrorLogging.ErrorLog(ex);
+            UIThreadHelper.SafeInvoke(this, () =>
+            {
+                MessageBox.Show("An unexpected error occurred while saving the file.", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            });
+        }
+        finally
+        {
+            await ResetSavingAnimationTokenAsync();
+            UIThreadHelper.SafeInvoke(this, () =>
+            {
+                FileOutputLbl.Text = "Idle...";
+                FileOutputLbl.ForeColor = Color.WhiteSmoke;
+            });
+        }
+    }
 
     private async Task<bool> PerformDecryptionAsync(IProgress<double> uiProgress)
     {
@@ -418,6 +422,19 @@ public partial class Encryption : UserControl
 
     private async void DecryptBtn_Click(object sender, EventArgs e)
     {
+        if (FileVars.Result == null)
+        {
+            MessageBox.Show(
+                "Please select a file before starting decryption.",
+                "No File Selected",
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Warning);
+            return;
+        }
+
+        DecryptBtn.Enabled = false;
+        Timer progressTimer = null;
+
         try
         {
             UIThreadHelper.SafeInvoke(this, () =>
@@ -425,57 +442,48 @@ public partial class Encryption : UserControl
                 MessageBox.Show(
                     "Do NOT close the program while loading. This may cause corrupted data that is NOT recoverable.\n" +
                     "If using a custom password to decrypt, you MUST enter the same password used during encryption.",
-                    "Info", MessageBoxButtons.OK, MessageBoxIcon.Exclamation);
+                    "Info",
+                    MessageBoxButtons.OK,
+                    MessageBoxIcon.Exclamation);
 
                 progressBar.Minimum = 0;
                 progressBar.Maximum = 100;
                 progressBar.Value = 0;
-                DecryptBtn.Enabled = false;
+
                 DecryptingAnimation();
             });
 
-            var currentValue = 0;
-            var targetValue = 0;
-            var timer = new Timer
-            {
-                Interval = 15
-            };
+            int currentValue = 0;
+            int targetValue = 0;
 
-            timer.Tick += (s, e) =>
+            progressTimer = new Timer { Interval = 15 };
+            progressTimer.Tick += (s, ev) =>
             {
-                if (currentValue < targetValue)
-                    currentValue++;
-                else if (currentValue > targetValue)
-                    currentValue--;
+                if (currentValue < targetValue) currentValue++;
+                else if (currentValue > targetValue) currentValue--;
 
                 progressBar.Value = currentValue;
 
-                if (currentValue == targetValue)
-                    timer.Stop();
+                if (currentValue == targetValue) progressTimer.Stop();
             };
 
             var uiProgress = new Progress<double>(percent =>
             {
-                var newTarget = (int)Math.Round(percent);
-                newTarget = Math.Max(progressBar.Minimum, Math.Min(progressBar.Maximum, newTarget));
-
+                var newTarget = Math.Max(0, Math.Min(100, (int)Math.Round(percent)));
                 if (newTarget != targetValue)
                 {
                     targetValue = newTarget;
-                    if (!timer.Enabled)
-                        timer.Start();
+                    if (!progressTimer.Enabled) progressTimer.Start();
                 }
             });
 
-
-            var success = await PerformDecryptionAsync(uiProgress).ConfigureAwait(false);
+            bool success = await PerformDecryptionAsync(uiProgress).ConfigureAwait(false);
 
             await ResetDecryptAnimationTokenAsync();
 
             if (success)
             {
                 await Task.Delay(2500);
-                await ResetDecryptAnimationTokenAsync();
 
                 UIThreadHelper.SafeInvoke(this, () =>
                 {
@@ -484,7 +492,9 @@ public partial class Encryption : UserControl
 
                     MessageBox.Show(
                         "File was decrypted successfully. Don't forget to export and restore its original extension.",
-                        "Success", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                        "Success",
+                        MessageBoxButtons.OK,
+                        MessageBoxIcon.Information);
 
                     FileSizeNumLbl.Text = FormatFileSize(FileVars.FileSize);
                     FileOutputLbl.Text = "Idle...";
@@ -495,27 +505,26 @@ public partial class Encryption : UserControl
                 });
             }
         }
+        catch (FileNotFoundException)
+        {
+            ShowError("The file was not found. Please verify the file path.", "File Error", MessageBoxIcon.Error);
+            FileVars.IsDecrypted = false;
+        }
+        catch (CryptographicException)
+        {
+            ShowError("Decryption failed. The file may be corrupted or the password is incorrect.", "Decryption Error", MessageBoxIcon.Error);
+            FileVars.IsDecrypted = false;
+        }
         catch (Exception ex)
         {
-            await ResetDecryptAnimationTokenAsync();
-
-            UIThreadHelper.SafeInvoke(this, () =>
-            {
-                FileOutputLbl.Text = "Error decrypting file.";
-                FileOutputLbl.ForeColor = Color.Red;
-
-                MessageBox.Show($"Error: {ex.Message}", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
-
-                FileOutputLbl.Text = "Idle...";
-                FileOutputLbl.ForeColor = Color.WhiteSmoke;
-                progressBar.Value = 0;
-                FileVars.IsDecrypted = false;
-            });
-
+            ShowError("An unexpected error occurred during decryption.", "Error", MessageBoxIcon.Error);
+            FileVars.IsDecrypted = false;
             ErrorLogging.ErrorLog(ex);
         }
         finally
         {
+            progressTimer?.Stop();
+            progressTimer?.Dispose();
             UIThreadHelper.SafeInvoke(this, () => DecryptBtn.Enabled = true);
         }
     }
@@ -563,38 +572,49 @@ public partial class Encryption : UserControl
 
     private async void EncryptBtn_Click(object sender, EventArgs e)
     {
+        if (FileVars.Result == null)
+        {
+            MessageBox.Show(
+                "Please select a file before starting encryption.",
+                "No File Selected",
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Warning);
+            return;
+        }
+
+        EncryptBtn.Enabled = false;
+
+        Timer progressTimer = null;
+
         try
         {
             UIThreadHelper.SafeInvoke(this, () =>
             {
                 MessageBox.Show(
                     "Do NOT close the program while loading. This may cause corrupted data that is NOT recoverable.",
-                    "Warning", MessageBoxButtons.OK, MessageBoxIcon.Exclamation);
+                    "Warning",
+                    MessageBoxButtons.OK,
+                    MessageBoxIcon.Exclamation);
 
-                EncryptBtn.Enabled = false;
                 EncryptingAnimation();
 
                 progressBar.Minimum = 0;
                 progressBar.Maximum = 100;
-                progressBar.Value = 0; // Reset progress bar at start
+                progressBar.Value = 0;
             });
-
-            if (FileVars.Result == null)
-                throw new InvalidOperationException("No input file loaded for encryption.");
 
             double currentValue = 0;
             double targetValue = 0;
 
-
-            var timer = new Timer { Interval = 15 };
-            timer.Tick += (s, e) =>
+            progressTimer = new Timer { Interval = 15 };
+            progressTimer.Tick += (s, ev) =>
             {
                 var delta = (targetValue - currentValue) * 0.1;
                 if (Math.Abs(delta) < 0.2)
                 {
                     currentValue = targetValue;
                     progressBar.Value = (int)Math.Round(currentValue);
-                    timer.Stop();
+                    progressTimer.Stop();
                 }
                 else
                 {
@@ -603,15 +623,15 @@ public partial class Encryption : UserControl
                 }
             };
 
-            // This is now Progress<long>, so we're passed raw byte counts:
             var uiProgress = new Progress<double>(percent =>
             {
-                targetValue = percent;
-                if (!timer.Enabled) timer.Start();
+                targetValue = Math.Max(0, Math.Min(100, percent));
+                if (!progressTimer.Enabled) progressTimer.Start();
             });
 
+            bool success = await PerformEncryptionAsync(uiProgress).ConfigureAwait(false);
 
-            var success = await PerformEncryptionAsync(uiProgress).ConfigureAwait(false);
+            await ResetEncryptAnimationTokenAsync();
 
             if (success)
             {
@@ -621,77 +641,59 @@ public partial class Encryption : UserControl
                 {
                     FileOutputLbl.Text = "File encrypted.";
                     FileOutputLbl.ForeColor = Color.LimeGreen;
-                });
 
-                await ResetEncryptAnimationTokenAsync();
-
-                UIThreadHelper.SafeInvoke(this, () =>
-                {
                     MessageBox.Show(
                         "File was encrypted successfully. You may now export it.\nTo decrypt, open the encrypted file later.",
-                        "Success", MessageBoxButtons.OK, MessageBoxIcon.Information);
-                });
+                        "Success",
+                        MessageBoxButtons.OK,
+                        MessageBoxIcon.Information);
 
-                GC.Collect(GC.MaxGeneration, GCCollectionMode.Aggressive, true, true);
-
-                UIThreadHelper.SafeInvoke(this, () =>
-                {
                     FileSizeNumLbl.Text = FormatFileSize(FileVars.Result.Length);
                     FileOutputLbl.Text = "Idle...";
                     FileOutputLbl.ForeColor = Color.WhiteSmoke;
-                    progressBar.Value = 0; // Reset progress bar when done
+                    progressBar.Value = 0;
                 });
 
                 FileVars.IsEncrypted = true;
                 FileVars.IsDecrypted = false;
+
+                GC.Collect(GC.MaxGeneration, GCCollectionMode.Aggressive, true, true);
             }
-        }
-        catch (InvalidOperationException ex)
-        {
-            await ResetEncryptAnimationTokenAsync();
-            ShowError("Error encrypting file.", ex.Message, MessageBoxIcon.Warning);
-            FileVars.IsEncrypted = false;
-            ErrorLogging.ErrorLog(ex);
         }
         catch (FileNotFoundException ex)
         {
-            await ResetEncryptAnimationTokenAsync();
-            ShowError("Error encrypting file.", "The file was not found. Please verify the file path.",
-                MessageBoxIcon.Error);
+            ShowError("The file was not found. Please verify the file path.", "File Error", MessageBoxIcon.Error);
             FileVars.IsEncrypted = false;
-            ErrorLogging.ErrorLog(ex);
         }
         catch (CryptographicException ex)
         {
-            await ResetEncryptAnimationTokenAsync();
-            ShowError("Error encrypting file.", "An error has occurred when trying to encrypt the file.",
-                MessageBoxIcon.Error);
+            ShowError("An error occurred during encryption. The file may be corrupted.", "Encryption Error", MessageBoxIcon.Error);
             FileVars.IsEncrypted = false;
-            ErrorLogging.ErrorLog(ex);
         }
         catch (Exception ex)
         {
-            await ResetEncryptAnimationTokenAsync();
-            ShowError("Error encrypting file.", "An unexpected error occurred during encryption.\n" + ex.Message,
-                MessageBoxIcon.Error);
+            ShowError("An unexpected error occurred during encryption.", "Error", MessageBoxIcon.Error);
             FileVars.IsEncrypted = false;
             ErrorLogging.ErrorLog(ex);
         }
         finally
         {
-            UIThreadHelper.SafeInvoke(this, () => { EncryptBtn.Enabled = true; });
+            progressTimer?.Stop();
+            progressTimer?.Dispose();
+            UIThreadHelper.SafeInvoke(this, () => EncryptBtn.Enabled = true);
         }
     }
 
-    // Helper to show error on UI safely
-    private void ShowError(string title, string message, MessageBoxIcon icon)
+    private void ShowError(string message, string title, MessageBoxIcon icon)
     {
         UIThreadHelper.SafeInvoke(this, () =>
         {
             FileOutputLbl.Text = title;
             FileOutputLbl.ForeColor = Color.Red;
             progressBar.Value = 0;
+
             MessageBox.Show(message, title, MessageBoxButtons.OK, icon);
+
             FileOutputLbl.Text = "Idle...";
             FileOutputLbl.ForeColor = Color.WhiteSmoke;
         });

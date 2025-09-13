@@ -42,7 +42,7 @@
             // 
             QRCodeImg.Location = new Point(12, 25);
             QRCodeImg.Name = "QRCodeImg";
-            QRCodeImg.Size = new Size(249, 355);
+            QRCodeImg.Size = new Size(301, 249);
             QRCodeImg.TabIndex = 0;
             QRCodeImg.TabStop = false;
             // 
@@ -53,9 +53,9 @@
             VerificationBox.Controls.Add(codetxt);
             VerificationBox.Controls.Add(verificationCodeLabel);
             VerificationBox.ForeColor = Color.White;
-            VerificationBox.Location = new Point(12, 386);
+            VerificationBox.Location = new Point(12, 289);
             VerificationBox.Name = "VerificationBox";
-            VerificationBox.Size = new Size(249, 189);
+            VerificationBox.Size = new Size(301, 189);
             VerificationBox.TabIndex = 1;
             VerificationBox.TabStop = false;
             VerificationBox.Text = "Verification";
@@ -69,7 +69,7 @@
             confirmBtn.ImageAlign = ContentAlignment.MiddleLeft;
             confirmBtn.Location = new Point(6, 104);
             confirmBtn.Name = "confirmBtn";
-            confirmBtn.Size = new Size(237, 42);
+            confirmBtn.Size = new Size(289, 42);
             confirmBtn.TabIndex = 4;
             confirmBtn.Text = "Enter";
             confirmBtn.UseVisualStyleBackColor = false;
@@ -81,7 +81,7 @@
             codetxt.ForeColor = Color.White;
             codetxt.Location = new Point(6, 67);
             codetxt.Name = "codetxt";
-            codetxt.Size = new Size(237, 31);
+            codetxt.Size = new Size(289, 31);
             codetxt.TabIndex = 1;
             // 
             // verificationCodeLabel
@@ -98,7 +98,7 @@
             AutoScaleDimensions = new SizeF(10F, 25F);
             AutoScaleMode = AutoScaleMode.Font;
             BackColor = Color.FromArgb(30, 30, 30);
-            ClientSize = new Size(275, 586);
+            ClientSize = new Size(325, 501);
             Controls.Add(VerificationBox);
             Controls.Add(QRCodeImg);
             DoubleBuffered = true;

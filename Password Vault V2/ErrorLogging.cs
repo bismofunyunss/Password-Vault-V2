@@ -1,65 +1,78 @@
-﻿namespace Password_Vault_V2;
+﻿using System;
+using System.IO;
+using System.Text.RegularExpressions;
 
 public static class ErrorLogging
 {
-    /// <summary>
-    /// The name of the file where error logs will be stored.
-    /// </summary>
-    private static readonly string LogFileName = "ErrorLog.txt";
+    private static readonly object _lock = new object();
+    private static readonly string LogDirectory = Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+        "MyAppName", "Logs");
 
     /// <summary>
-    /// Logs the provided exception and any inner exception to the error log file.
+    /// Logs an exception and all inner exceptions to a daily rotating log file.
+    /// Messages and stack traces are sanitized to remove newlines and file paths.
     /// </summary>
-    /// <param name="ex">The exception to log.</param>
-    /// <remarks>
-    /// Logs include the exception type, message, stack trace, and timestamp.
-    /// If the logging process fails, an error message is shown via a message box.
-    /// </remarks>
     public static void ErrorLog(Exception ex)
     {
         try
         {
-            using var writer = File.AppendText(LogFileName);
-            writer.AutoFlush = true;
-            LogExceptionDetails(writer, ex);
+            Directory.CreateDirectory(LogDirectory);
 
-            // If there's an inner exception, log it
-            if (ex.InnerException != null)
+            string logFilePath = Path.Combine(LogDirectory, $"ErrorLog_{DateTime.Now:yyyy-MM-dd}.txt");
+
+            lock (_lock)
             {
-                writer.WriteLine("Inner Exception:");
-                LogExceptionDetails(writer, ex.InnerException);
+                using var writer = new StreamWriter(logFilePath, append: true);
+                writer.WriteLine(new string('-', 80));
+                WriteException(writer, ex);
+
+                // Recursively log all inner exceptions
+                Exception inner = ex.InnerException;
+                while (inner != null)
+                {
+                    writer.WriteLine("Inner Exception:");
+                    WriteException(writer, inner);
+                    inner = inner.InnerException;
+                }
             }
         }
-        catch (IOException ioException)
+        catch
         {
-            HandleLoggingError($"Error logging failed due to I/O exception: {ioException.Message}");
-        }
-        catch (Exception logException)
-        {
-            HandleLoggingError($"Error logging failed with an unexpected exception: {logException.Message}");
+            // Silent failure; optionally write to Debug output
+            System.Diagnostics.Debug.WriteLine("Error logging failed.");
         }
     }
 
     /// <summary>
-    /// Writes detailed information about an exception to the provided text writer.
+    /// Writes sanitized exception details to the writer.
+    /// Removes newlines and replaces file paths with <path>.
     /// </summary>
-    /// <param name="writer">The <see cref="TextWriter"/> to write to.</param>
-    /// <param name="ex">The exception whose details are to be logged.</param>
-    private static void LogExceptionDetails(TextWriter writer, Exception ex)
+    private static void WriteException(TextWriter writer, Exception ex)
     {
         writer.WriteLine($"Timestamp: {DateTime.Now:yyyy-MM-dd HH:mm:ss}");
         writer.WriteLine($"Exception Type: {ex.GetType().FullName}");
-        writer.WriteLine($"Message: {ex.Message}");
-        writer.WriteLine($"Stack Trace: {ex.StackTrace}");
+        writer.WriteLine($"Message: {SanitizeText(ex.Message)}");
+        writer.WriteLine($"Stack Trace: {SanitizeText(ex.StackTrace)}");
         writer.WriteLine();
     }
 
     /// <summary>
-    /// Displays a message box with the specified error message if logging fails.
+    /// Sanitizes exception text to remove newlines and replace file paths.
     /// </summary>
-    /// <param name="errorMessage">The error message to display.</param>
-    private static void HandleLoggingError(string errorMessage)
+    private static string SanitizeText(string text)
     {
-        MessageBox.Show(errorMessage, "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+        if (string.IsNullOrEmpty(text))
+            return string.Empty;
+
+        // Remove newlines
+        text = text.Replace(Environment.NewLine, " ").Replace("\n", " ").Replace("\r", " ");
+
+        // Replace Windows-style file paths: C:\...\file.ext → <path>
+        text = Regex.Replace(text, @"[a-zA-Z]:\\[^\s]*", "<path>");
+
+        return text;
     }
 }
+
+

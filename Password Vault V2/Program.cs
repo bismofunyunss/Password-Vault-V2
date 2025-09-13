@@ -1,4 +1,6 @@
+using Microsoft.Win32;
 using System.Runtime.InteropServices;
+using System.Security.Cryptography;
 
 namespace Password_Vault_V2;
 
@@ -66,6 +68,17 @@ internal static class Program
 
         Application.EnableVisualStyles();
         Application.SetCompatibleTextRenderingDefault(false);
+        bool isFipsEnabled = false;
+        using (RegistryKey key = Registry.LocalMachine.OpenSubKey(@"SYSTEM\CurrentControlSet\Control\Lsa\FipsAlgorithmPolicy"))
+        {
+            if (key != null)
+            {
+                object val = key.GetValue("Enabled");
+                if (val is int intVal && intVal == 1)
+                    isFipsEnabled = true;
+            }
+        }
+        MessageBox.Show($"Fips enabled: {isFipsEnabled}");
         // Now start the application
         _mainForm = new PasswordVault();
         Application.Run(_mainForm);

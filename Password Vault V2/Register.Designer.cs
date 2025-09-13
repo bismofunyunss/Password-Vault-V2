@@ -122,7 +122,7 @@ namespace Password_Vault_V2
             // 
             statusLbl.AutoSize = true;
             statusLbl.Font = new Font("Century Gothic", 11F);
-            statusLbl.Location = new Point(8, 489);
+            statusLbl.Location = new Point(8, 457);
             statusLbl.Name = "statusLbl";
             statusLbl.Size = new Size(94, 25);
             statusLbl.TabIndex = 8;
@@ -132,7 +132,7 @@ namespace Password_Vault_V2
             // 
             outputLbl.AutoSize = true;
             outputLbl.Font = new Font("Century Gothic", 11F);
-            outputLbl.Location = new Point(106, 489);
+            outputLbl.Location = new Point(106, 457);
             outputLbl.Name = "outputLbl";
             outputLbl.Size = new Size(71, 25);
             outputLbl.TabIndex = 9;
@@ -159,7 +159,7 @@ namespace Password_Vault_V2
             RegisterBox.Location = new Point(12, 16);
             RegisterBox.Name = "RegisterBox";
             RegisterBox.Padding = new Padding(5);
-            RegisterBox.Size = new Size(467, 522);
+            RegisterBox.Size = new Size(467, 546);
             RegisterBox.TabIndex = 0;
             RegisterBox.TabStop = false;
             RegisterBox.Text = "Register Account";
@@ -187,7 +187,7 @@ namespace Password_Vault_V2
             // pictureBox1
             // 
             pictureBox1.Image = (Image)resources.GetObject("pictureBox1.Image");
-            pictureBox1.Location = new Point(324, 383);
+            pictureBox1.Location = new Point(322, 407);
             pictureBox1.Name = "pictureBox1";
             pictureBox1.Size = new Size(122, 131);
             pictureBox1.TabIndex = 13;
@@ -198,7 +198,7 @@ namespace Password_Vault_V2
             WelcomeLabel.AutoSize = true;
             WelcomeLabel.Font = new Font("Century Gothic", 11F);
             WelcomeLabel.ForeColor = Color.White;
-            WelcomeLabel.Location = new Point(6, 464);
+            WelcomeLabel.Location = new Point(6, 432);
             WelcomeLabel.Name = "WelcomeLabel";
             WelcomeLabel.Size = new Size(169, 25);
             WelcomeLabel.TabIndex = 12;
@@ -212,7 +212,7 @@ namespace Password_Vault_V2
             Controls.Add(RegisterBox);
             DoubleBuffered = true;
             Name = "Register";
-            Size = new Size(470, 541);
+            Size = new Size(496, 565);
             Paint += Register_Paint;
             RegisterBox.ResumeLayout(false);
             RegisterBox.PerformLayout();

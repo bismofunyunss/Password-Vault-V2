@@ -38,6 +38,7 @@ public sealed partial class PasswordVault : Form
 
     public class Variables
     {
+        private readonly Settings cryptoSettingsControls = new();
         public int AttemptsRemaining;
 
         public bool IsDragging;
@@ -713,9 +714,9 @@ public sealed partial class PasswordVault : Form
 
     private void LoadCryptoSettings()
     {
-        CryptoSettings.Iterations = Settings.Default.Iterations;
-        CryptoSettings.MemSize = Settings.Default.MemorySize;
-        CryptoSettings.Parallelism = Settings.Default.Parallelism;
+        Settings.Default.Iterations = Settings.Default.Iterations;
+        Settings.Default.MemorySize = Settings.Default.MemorySize;
+        Settings.Default.MemorySize = Settings.Default.Parallelism;
     }
 
     private void HandleFipsMode()
@@ -941,8 +942,8 @@ public sealed partial class PasswordVault : Form
 
     private void RegisterBtn_Click(object sender, EventArgs e)
     {
-        Size = Size with { Height = 530 };
-        Size = Size with { Width = 696 };
+        Size = Size with { Height = 620 };
+        Size = Size with { Width = 710 };
         Vars.RegisterControls.Location = new Point(210, 45);
         SidePanelMarker.Height = RegisterBtn.Height;
         SidePanelMarker.Top = RegisterBtn.Top;
@@ -991,10 +992,11 @@ public sealed partial class PasswordVault : Form
 
     private void CryptoSettingsBtn_Click(object sender, EventArgs e)
     {
-        Size = Size with { Height = 450 };
-        Size = Size with { Width = 685 };
+        Size = Size with { Height = 800 };
+        Size = Size with { Width = 695 };
         SidePanelMarker.Height = CryptoSettingsBtn.Height;
         SidePanelMarker.Top = CryptoSettingsBtn.Top;
+        SeparatePanel.Height = SidePanelMenu.Height;
         LoginGroupBox.Visible = false;
         Vars.VaultControls.Visible = false;
         Vars.RegisterControls.Visible = false;

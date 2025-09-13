@@ -156,4 +156,9 @@ public partial class CryptoSettings : UserControl
         e.Graphics.Clear(this.BackColor);  // Clear previous drawings
         e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
     }
+
+    private void UpdatePassBtn_Click(object sender, EventArgs e)
+    {
+
+    }
 }

@@ -1,13 +1,17 @@
 ﻿using System.Buffers;
 using System.Buffers.Binary;
 using System.Collections.Concurrent;
+using System.Drawing;
 using System.Linq;
+using System.Net;
 using System.Runtime.InteropServices.WindowsRuntime;
 using System.Security.Cryptography;
 using System.Text;
 using System.Threading.Channels;
+using Tpm2Lib;
 using Windows.Storage.Streams;
 using static Password_Vault_V2.Crypto;
+using static System.Security.Cryptography.AesGcm;
 using static System.Windows.Forms.VisualStyles.VisualStyleElement.ProgressBar;
 using Buffer = System.Buffer;
 
@@ -333,7 +337,7 @@ internal abstract class FipsCrypto
                         Buffer.BlockCopy(baseNonce, 0, nonce, 0, 8);
                         BitConverter.GetBytes(currentIndex).CopyTo(nonce, 8);
 
-                        using var aesGcm = new AesGcm(key);
+                        using var aesGcm = new AesGcm(key, GcmTagSize);
                         aesGcm.Encrypt(nonce, chunkCopy, ciphertext, tag);
 
                         lock (chunks) // preserve write order later
@@ -361,9 +365,10 @@ internal abstract class FipsCrypto
             await output.FlushAsync();
         }
 
+
         public static async Task DecryptFileAesGcmParallelAsync(
-       Stream input, Stream output, byte[] key,
-       IProgress<double>? progress = null, int chunkSize = 64 * 1024, int maxParallelism = 4)
+        Stream input, Stream output, byte[] key,
+        IProgress<double>? progress = null, int chunkSize = 64 * 1024, int maxParallelism = 4)
         {
             if (input == null || output == null) throw new ArgumentNullException();
             if (key == null || key.Length != 32) throw new ArgumentException("Key must be 32 bytes.");
@@ -405,7 +410,7 @@ internal abstract class FipsCrypto
                         Buffer.BlockCopy(baseNonce, 0, nonce, 0, 8);
                         BitConverter.GetBytes(currentIndex).CopyTo(nonce, 8);
 
-                        using var aesGcm = new AesGcm(key);
+                        using var aesGcm = new AesGcm(key, GcmTagSize);
                         aesGcm.Decrypt(nonce, cipherCopy, tagCopy, plaintext);
 
                         lock (plaintextChunks)
@@ -431,4 +436,248 @@ internal abstract class FipsCrypto
             await output.FlushAsync();
         }
     }
+
+    public static class TpmAesPcrSeal
+    {
+    // Example PCRs to bind
+    private static readonly uint[] PcrsToBind = { 0, 7 };
+
+    // Example persistent handle for primary key
+    private static readonly TpmHandle PrimaryHandlePersist = new TpmHandle(0x81010001);
+
+        /// <summary>
+        /// Creates and seals a 256-bit AES key bound to the specified PCRs.
+        /// Returns the private and public blobs for later loading.
+        /// </summary>
+        public static (TpmPrivate privateBlob, TpmPublic publicBlob) SealAesKey(byte[] aesKey)
+        {
+            if (aesKey == null || aesKey.Length != 32)
+                throw new ArgumentException("AES key must be 32 bytes (256-bit).", nameof(aesKey));
+
+            using var tpm = new Tpm2(new TbsDevice());
+
+            // 1) Create primary key (RSA 2048)
+            var primaryTemplate = new TpmPublic(
+                TpmAlgId.Sha256,
+                ObjectAttr.FixedTPM | ObjectAttr.FixedParent | ObjectAttr.SensitiveDataOrigin | ObjectAttr.UserWithAuth | ObjectAttr.Decrypt,
+                null,
+                new RsaParms(
+                    new SymDefObject(TpmAlgId.Aes, 256, TpmAlgId.Cfb),
+                    new NullAsymScheme(),
+                    2048,
+                    65537),
+                new Tpm2bPublicKeyRsa()
+            );
+
+            var primaryHandle = tpm.CreatePrimary(
+                TpmRh.Owner,
+                new SensitiveCreate(),
+                primaryTemplate,
+                null,
+                new PcrSelection[0],
+                out TpmPublic outPublic,
+                out CreationData creationData,
+                out byte[] creationHash,
+                out TkCreation creationTicket
+            );
+
+            // 2) Start a policy session for PCR binding
+            var session = tpm.StartAuthSessionEx(TpmSe.Policy, TpmAlgId.Sha256);
+            var pcrSelection = new PcrSelection(TpmAlgId.Sha256, PcrsToBind);
+            tpm.PolicyPCR(session, new byte[32], new[] { pcrSelection });
+            byte[] policyDigest = tpm.PolicyGetDigest(session);
+
+
+            // 3) Create sealed object with your AES key
+            var sealTemplate = new TpmPublic(
+            TpmAlgId.Sha256,                           // Name algorithm
+            ObjectAttr.UserWithAuth | ObjectAttr.FixedParent | ObjectAttr.FixedTPM, // attributes
+            policyDigest,                              // authPolicy
+            new SymDefObject(TpmAlgId.Null, 0, TpmAlgId.Null),      // <--- IPublicParmsUnion
+            new Tpm2bDigestKeyedhash()                 // unique field
+        );
+
+            var sens = new SensitiveCreate(the_userAuth: new byte[0], the_data: aesKey);
+
+            TpmPrivate privateBlob = tpm.Create(
+                primaryHandle,
+                sens,
+                sealTemplate,
+                null,
+                new PcrSelection[0],
+                out TpmPublic publicBlob,
+                out CreationData creationData2,
+                out byte[] hash2,
+                out TkCreation ticket2
+            );
+
+            Console.WriteLine("AES key sealed to PCRs " + string.Join(",", PcrsToBind));
+
+            tpm.FlushContext(primaryHandle);
+
+            return (privateBlob, publicBlob);
+        }
+
+
+        /// <summary>
+        /// Loads a sealed object and unseals the AES key if PCR policy matches.
+        /// </summary>
+        public static byte[] UnsealAesKey(TpmPrivate privateBlob, TpmPublic publicBlob)
+    {
+        using var tpm = new Tpm2(new TbsDevice());
+
+        // 1) Create primary key (same template as sealing)
+        var primaryTemplate = new TpmPublic(
+            TpmAlgId.Sha256,
+            ObjectAttr.FixedTPM | ObjectAttr.FixedParent | ObjectAttr.SensitiveDataOrigin | ObjectAttr.UserWithAuth | ObjectAttr.Decrypt,
+            null,
+            new RsaParms(
+                new SymDefObject(TpmAlgId.Aes, 256, TpmAlgId.Cfb),
+                new NullAsymScheme(),
+                2048,
+                65537),
+            new Tpm2bPublicKeyRsa()
+        );
+
+        var primaryHandle = tpm.CreatePrimary(
+            TpmRh.Owner,
+            new SensitiveCreate(),
+            primaryTemplate,
+            null,
+            new PcrSelection[0],
+            out TpmPublic outPublic,
+            out CreationData creationData,
+            out byte[] creationHash,
+            out TkCreation creationTicket
+        );
+
+        // 2) Load sealed object
+        var sealedHandle = tpm.Load(primaryHandle, privateBlob, publicBlob);
+
+        // 3) Start policy session and apply PCR policy
+        var session = tpm.StartAuthSessionEx(TpmSe.Policy, TpmAlgId.Sha256);
+        var pcrSelection = new PcrSelection(TpmAlgId.Sha256, PcrsToBind);
+        tpm.PolicyPCR(session, new byte[32], new[] { pcrSelection });
+
+        // 4) Unseal AES key using session
+        byte[] aesKey = tpm.Unseal(sealedHandle);
+
+        // 5) Cleanup
+        tpm.FlushContext(sealedHandle);
+        tpm.FlushContext(primaryHandle);
+
+        Console.WriteLine("AES key successfully unsealed.");
+
+        return aesKey;
+    }
 }
+
+
+public class Tpm2PcrSeal
+    {
+        // PCRs to bind (example: 0 and 7)
+        static uint[] pcrIndices = { 0, 7 };
+        static TpmHandle persHandle = new TpmHandle(0x81010001); // your persistent handle
+        // Connect to TPM
+        public static void Tpm()
+        {
+            using var tpm = new Tpm2(new TbsDevice());
+            var tpmSafe = tpm._AllowErrors();
+            TpmPublic pub = tpmSafe.ReadPublic(persHandle, out byte[] name, out byte[] qualifiedName);
+
+            if (pub == null)
+            {
+                Console.WriteLine("ReadPublic failed, handle might not exist.");
+            }
+            else
+            {
+                Console.WriteLine("Successfully read public part of key.");
+            }
+
+            // 1) Create primary storage key
+            TpmPublic primaryTemplate = new TpmPublic(
+            TpmAlgId.Sha256,
+            ObjectAttr.FixedTPM | ObjectAttr.FixedParent | ObjectAttr.SensitiveDataOrigin | ObjectAttr.UserWithAuth | ObjectAttr.Decrypt,
+            null,
+            new RsaParms(
+                new SymDefObject(TpmAlgId.Aes, 256, TpmAlgId.Cfb),
+                new NullAsymScheme(),
+                2048,
+                65537),
+            new Tpm2bPublicKeyRsa()
+        );
+
+            var primaryHandle = tpm.CreatePrimary(
+                TpmRh.Owner,
+                new SensitiveCreate(),
+                primaryTemplate,
+                null,
+                new PcrSelection[0],
+                out TpmPublic outPublic,
+                out CreationData creationHash,
+                out byte[] creationTicket,
+                out TkCreation creation
+            );
+
+            Console.WriteLine("Primary key handle: 0x" + primaryHandle.handle.ToString("X"));
+
+            // 2) Start policy session
+            var sessionHandle = tpm.StartAuthSessionEx(TpmSe.Policy, TpmAlgId.Sha256);
+
+            // Set PCR policy
+            var pcrSelection = new PcrSelection(TpmAlgId.Sha256, pcrIndices);
+            tpm.PolicyPCR(sessionHandle, new byte[32], new[] { pcrSelection });
+
+            // Get policy digest
+            byte[] policyDigest = tpm.PolicyGetDigest(sessionHandle);
+            Console.WriteLine("Policy digest: " + BitConverter.ToString(policyDigest));
+
+            // 3) Create sealed object
+            var sens = new SensitiveCreate();
+
+
+            TpmPublic sealTemplate = new TpmPublic(
+                TpmAlgId.Sha256,
+                ObjectAttr.UserWithAuth | ObjectAttr.FixedParent | ObjectAttr.FixedTPM,
+                policyDigest, primaryTemplate.parameters, primaryTemplate.unique
+            );
+
+            TpmPrivate privateBlob = tpm.Create(
+                primaryHandle,
+                sens,
+                sealTemplate,
+                null,
+                new PcrSelection[0],
+                out TpmPublic publicBlob,
+                out CreationData creationData,
+                out byte[] hash,
+                out TkCreation c
+            );
+
+            Console.WriteLine("Sealed object created.");
+
+            // 4) Load sealed object
+            var sealedHandle = tpm.Load(primaryHandle, privateBlob, publicBlob);
+            Console.WriteLine("Sealed object handle: 0x" + sealedHandle.handle.ToString("X"));
+
+            var session = tpm.StartAuthSessionEx(TpmSe.Policy, TpmAlgId.Sha256);
+
+            // Apply PCR policy
+            pcrSelection = new PcrSelection(TpmAlgId.Sha256, new uint[] { 0, 7 });
+            tpm.PolicyPCR(session, new byte[32], new[] { pcrSelection });
+
+            // Unseal
+            byte[] aesKey = tpm.Unseal(sealedHandle);
+            Console.WriteLine("AES key: " + BitConverter.ToString(aesKey));
+
+
+            // 7) Clean up
+            tpm.FlushContext(sealedHandle);
+            tpm.FlushContext(primaryHandle);
+            tpm.FlushContext(sessionHandle);
+
+            Console.WriteLine("Done.");
+        }
+    }
+}
+  
