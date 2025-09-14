@@ -167,11 +167,16 @@ public class SoftwareKeyStore : IDisposable
         if (entry == null)
             throw new Exception("Master key entry not found.");
 
-        byte[] masterKey =
-            FipsCrypto.AesKeyWrapRfc5649.Unwrap(kek, DataConversionHelpers.HexStringToByteArray(entry.WrappedKey));
+        // entry.WrappedKey = TPM-RSA-wrapped RFC5649 blob
+        using var wrappedAesKey = new FipsCrypto.WrappedAesKeyStore("MyTpmRsaKey");
+
+        // Pass RSA blob and KEK
+        byte[] masterKey = wrappedAesKey.UnsealKey(
+            DataConversionHelpers.HexStringToByteArray(entry.WrappedKey),
+            kek);
 
         CryptographicOperations.ZeroMemory(kek);
-        return masterKey; // caller should use MasterKey.SecureKey or similar pinned buffer
+        return masterKey;
     }
 
     public void RotateMasterKey(byte[] newMasterKey, string notes = "")

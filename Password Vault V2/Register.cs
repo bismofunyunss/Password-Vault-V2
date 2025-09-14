@@ -4,7 +4,9 @@ using System.Diagnostics;
 using System.Drawing.Drawing2D;
 using System.Security.Cryptography;
 using System.Text;
+using Tpm2Lib;
 using static Password_Vault_V2.Crypto;
+using static Password_Vault_V2.FipsCrypto;
 
 namespace Password_Vault_V2;
 
@@ -394,7 +396,7 @@ public sealed partial class Register : UserControl
             userTxt.Clear();
             passTxt.Clear();
             confirmPassTxt.Clear();
-
+            emailBox.Clear();
             GC.Collect(GC.MaxGeneration, GCCollectionMode.Aggressive, true, true);
             GC.WaitForPendingFinalizers();
         }
@@ -419,7 +421,7 @@ public sealed partial class Register : UserControl
             var uuid = Guid.NewGuid().ToByteArray();
 
             // 4️⃣ Encrypt master key using IntermediateKey + MasterKeySalt
-            var encryptedMasterKey = FipsCrypto.AesKeyWrapRfc5649.Wrap(
+            var wrappedKey = AesKeyWrapRfc3394.Wrap(
                 keys.IntermediateKey.AsSpan().ToArray(), keys.MasterKey.AsSpan().ToArray());
 
 
@@ -428,7 +430,7 @@ public sealed partial class Register : UserControl
                 keys.PasswordHash.AsSpan().ToArray(),
                 uuid,
                 Encoding.UTF8.GetBytes(email),
-                encryptedMasterKey);
+                wrappedKey);
 
             // 6️⃣ Encrypt user file with AES-HMAC (single pass)
             var encryptedUserFile = FipsCrypto.SimpleAesHmac.Encrypt(
@@ -445,16 +447,23 @@ public sealed partial class Register : UserControl
             // 8️⃣ Write to disk
             var path = UserFileManager.GetUserFilePath(username);
 
-            using var keyStore = new SoftwareKeyStore(UserFileManager.GetUserFolder(username));
+            // 2) TPM-RSA encrypt the RFC-wrapped blob & persist result
+            using var wrappedStore = new WrappedAesKeyStore("MyTpmRsaKey");
+            byte[] rsaEncryptedBlob = wrappedStore.SealWrappedKey(wrappedKey);
 
-            // 3. Add new master key
-            keyStore.AddNewMasterKey(encryptedMasterKey, "Initial key");
+            using SoftwareKeyStore keyStore = new SoftwareKeyStore(UserFileManager.GetUserFolder(userTxt.Text));
+            // Persist rsaEncryptedBlob (e.g., AddNewMasterKey expects the wrapped blob)
+            // Ensure AddNewMasterKey receives the RSA-encrypted bytes
+            keyStore.AddNewMasterKey(rsaEncryptedBlob, "initial key");
 
-            CryptographicOperations.ZeroMemory(encryptedMasterKey);
+            CryptoUtilities.ClearMemoryNative(wrappedKey, rsaEncryptedBlob, keys.MasterKey.AsSpan().ToArray());
+
             CryptographicOperations.ZeroMemory(keys.IntermediateKey.AsSpan());
 
             await IO.WriteFile(path, finalFile);
             File.SetAttributes(path, FileAttributes.ReadOnly);
+            LoginAlertManager.RegisterUserEmail(userTxt.Text, emailBox.Text);
+            await LoginAlertManager.SendLoginAlertAsync(userTxt.Text);
 
             outputLbl.Text = "User created successfully.";
             outputLbl.ForeColor = Color.LimeGreen;
@@ -464,7 +473,7 @@ public sealed partial class Register : UserControl
                 "Registration Complete", MessageBoxButtons.OK, MessageBoxIcon.Information);
 
             // Zero sensitive memory
-            CryptographicOperations.ZeroMemory(encryptedMasterKey);
+            CryptographicOperations.ZeroMemory(wrappedKey);
             CryptographicOperations.ZeroMemory(encryptedUserFile);
             CryptographicOperations.ZeroMemory(finalFile);
         }
@@ -481,6 +490,9 @@ public sealed partial class Register : UserControl
             userTxt.Clear();
             passTxt.Clear();
             confirmPassTxt.Clear();
+            emailBox.Clear();
+            outputLbl.Text = "Idle...";
+            outputLbl.ForeColor = Color.White;
             GC.Collect(GC.MaxGeneration, GCCollectionMode.Aggressive, true, true);
             GC.WaitForPendingFinalizers();
         }
@@ -556,13 +568,9 @@ public sealed partial class Register : UserControl
             else
                 await FipsModeRegisterAsync(username, passwordBytes, confirmPasswordBytes, username);
 
-            LoginAlertManager.RegisterUserEmail(userTxt.Text, emailBox.Text);
-
             // ✅ Update label on success
             outputLbl.Text = "Created account";
             outputLbl.ForeColor = Color.LimeGreen;
-
-            await LoginAlertManager.SendLoginAlertAsync(userTxt.Text);
         }
         catch
         {

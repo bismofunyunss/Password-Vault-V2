@@ -1,18 +1,8 @@
 ﻿using System.Buffers;
 using System.Buffers.Binary;
-using System.Collections.Concurrent;
-using System.Drawing;
-using System.Linq;
-using System.Net;
 using System.Runtime.InteropServices.WindowsRuntime;
 using System.Security.Cryptography;
-using System.Text;
-using System.Threading.Channels;
-using Tpm2Lib;
-using Windows.Storage.Streams;
 using static Password_Vault_V2.Crypto;
-using static System.Security.Cryptography.AesGcm;
-using static System.Windows.Forms.VisualStyles.VisualStyleElement.ProgressBar;
 using Buffer = System.Buffer;
 
 namespace Password_Vault_V2;
@@ -21,7 +11,7 @@ internal abstract class FipsCrypto
 {
     internal const int KeySize = 32;
     internal const int SaltSize = 32;
-    internal static bool FipsEnabled = false;
+    internal static bool FipsEnabled;
 
     public static byte[] Pbkdf2(byte[] password, byte[] salt, int outputLength)
     {
@@ -97,150 +87,107 @@ internal abstract class FipsCrypto
         }
     }
 
-    internal static class AesKeyWrapRfc5649
+public static class AesKeyWrapRfc3394
+{
+    private const int BlockSize = 8; // 64-bit blocks
+    private static readonly ulong DefaultIv = 0xA6A6A6A6A6A6A6A6UL;
+
+    /// <summary>
+    /// Wraps a key using AES Key Wrap (RFC 3394).
+    /// </summary>
+    /// <param name="kek">Key encryption key (AES key, 128/192/256 bits)</param>
+    /// <param name="keyToWrap">Key to wrap (must be multiple of 8 bytes)</param>
+    /// <returns>Wrapped key</returns>
+    public static byte[] Wrap(byte[] kek, byte[] keyToWrap)
     {
-        private const int BlockSize = 8; // 64-bit blocks
-        private static readonly byte[] DefaultIvPrefix = { 0xA6, 0x59, 0x59, 0xA6 };
+        if (kek == null) throw new ArgumentNullException(nameof(kek));
+        if (keyToWrap == null || keyToWrap.Length % BlockSize != 0)
+            throw new ArgumentException("Key must be multiple of 8 bytes", nameof(keyToWrap));
 
-        public static byte[] Wrap(byte[] kek, byte[] keyToWrap)
+        int n = keyToWrap.Length / BlockSize;
+        byte[] R = new byte[keyToWrap.Length];
+        Array.Copy(keyToWrap, R, keyToWrap.Length);
+        ulong A = DefaultIv;
+
+        using var aes = CreateEcbAes(kek);
+        using var encryptor = aes.CreateEncryptor();
+
+        for (int j = 0; j <= 5; j++)
         {
-            if (kek == null) throw new ArgumentNullException(nameof(kek));
-            if (keyToWrap == null || keyToWrap.Length == 0) throw new ArgumentException("Key to wrap cannot be empty.", nameof(keyToWrap));
-
-            int n = (keyToWrap.Length + 7) / BlockSize;
-            byte[] P = new byte[n * BlockSize];
-            Array.Copy(keyToWrap, P, keyToWrap.Length); // zero padding
-
-            Span<byte> Q = stackalloc byte[8];
-            DefaultIvPrefix.CopyTo(Q);
-            BinaryPrimitives.WriteUInt32BigEndian(Q.Slice(4, 4), (uint)keyToWrap.Length);
-            ulong A = BinaryPrimitives.ReadUInt64BigEndian(Q);
-
-            if (keyToWrap.Length <= BlockSize)
+            for (int i = 0; i < n; i++)
             {
-                byte[] block = new byte[16];
-                BinaryPrimitives.WriteUInt64BigEndian(block.AsSpan(0, 8), A);
-                Array.Copy(P, 0, block, 8, BlockSize);
+                byte[] B = new byte[16];
+                BinaryPrimitives.WriteUInt64BigEndian(B.AsSpan(0, 8), A);
+                Array.Copy(R, i * BlockSize, B, 8, BlockSize);
 
-                using var aes = CreateEcbAes(kek);
-                return aes.CreateEncryptor().TransformFinalBlock(block, 0, block.Length);
+                var C = encryptor.TransformFinalBlock(B, 0, 16);
+                A = BinaryPrimitives.ReadUInt64BigEndian(C.AsSpan(0, 8)) ^ (ulong)((n * j) + (i + 1));
+                Array.Copy(C, 8, R, i * BlockSize, BlockSize);
             }
-
-            byte[] R = new byte[n * BlockSize];
-            Array.Copy(P, R, P.Length);
-
-            using var aesWrap = CreateEcbAes(kek);
-            using var enc = aesWrap.CreateEncryptor();
-
-            for (int j = 0; j <= 5; j++)
-            {
-                for (int i = 0; i < n; i++)
-                {
-                    byte[] B = new byte[16];
-                    BinaryPrimitives.WriteUInt64BigEndian(B.AsSpan(0, 8), A);
-                    Array.Copy(R, i * BlockSize, B, 8, BlockSize);
-
-                    var C = enc.TransformFinalBlock(B, 0, 16);
-                    ulong msb = BinaryPrimitives.ReadUInt64BigEndian(C.AsSpan(0, 8));
-                    ulong t = (ulong)(j * n + (i + 1));
-                    A = msb ^ t;
-
-                    Array.Copy(C, 8, R, i * BlockSize, BlockSize);
-                }
-            }
-
-            byte[] Ctotal = new byte[(n + 1) * BlockSize];
-            BinaryPrimitives.WriteUInt64BigEndian(Ctotal.AsSpan(0, 8), A);
-            Array.Copy(R, 0, Ctotal, 8, R.Length);
-
-            return Ctotal;
         }
 
-        public static byte[] Unwrap(byte[] kek, byte[] wrapped)
-        {
-            if (kek == null) throw new ArgumentNullException(nameof(kek));
-            if (wrapped == null || wrapped.Length < 16 || wrapped.Length % 8 != 0)
-                throw new ArgumentException("Invalid wrapped key length.", nameof(wrapped));
-
-            if (wrapped.Length == 16)
-            {
-                using var aes = CreateEcbAes(kek);
-                var D = aes.CreateDecryptor().TransformFinalBlock(wrapped, 0, 16);
-
-                for (int i = 0; i < 4; i++)
-                    if (D[i] != DefaultIvPrefix[i])
-                        throw new CryptographicException("RFC5649 IV prefix check failed.");
-
-                uint mli = BinaryPrimitives.ReadUInt32BigEndian(D.AsSpan(4, 4));
-                if (mli == 0 || mli > 8) throw new CryptographicException("Invalid MLI for key <= 8");
-
-                for (int i = (int)mli; i < 8; i++)
-                    if (D[8 + i] != 0) throw new CryptographicException("Non-zero padding");
-
-                byte[] K = new byte[mli];
-                Array.Copy(D, 8, K, 0, (int)mli);
-                return K;
-            }
-
-            int n = wrapped.Length / 8 - 1;
-            ulong A = BinaryPrimitives.ReadUInt64BigEndian(wrapped.AsSpan(0, 8));
-            byte[] R = new byte[n * BlockSize];
-            Array.Copy(wrapped, 8, R, 0, R.Length);
-
-            using var aesWrap = CreateEcbAes(kek);
-            using var dec = aesWrap.CreateDecryptor();
-
-            for (int j = 5; j >= 0; j--)
-            {
-                for (int i = n - 1; i >= 0; i--)
-                {
-                    ulong t = (ulong)(j * n + (i + 1));
-                    ulong Atemp = A ^ t;
-
-                    byte[] B = new byte[16];
-                    BinaryPrimitives.WriteUInt64BigEndian(B.AsSpan(0, 8), Atemp);
-                    Array.Copy(R, i * BlockSize, B, 8, BlockSize);
-
-                    B = dec.TransformFinalBlock(B, 0, 16);
-
-                    A = BinaryPrimitives.ReadUInt64BigEndian(B.AsSpan(0, 8));
-                    Array.Copy(B, 8, R, i * BlockSize, BlockSize);
-                }
-            }
-
-            Span<byte> Q = stackalloc byte[8];
-            BinaryPrimitives.WriteUInt64BigEndian(Q, A);
-            for (int i = 0; i < 4; i++)
-                if (Q[i] != DefaultIvPrefix[i])
-                    throw new CryptographicException("RFC5649 IV prefix check failed.");
-
-            uint mliFinal = BinaryPrimitives.ReadUInt32BigEndian(Q.Slice(4, 4));
-            if (mliFinal == 0 || mliFinal > R.Length) throw new CryptographicException("Invalid MLI after unwrap");
-
-            for (int i = (int)mliFinal; i < R.Length; i++)
-                if (R[i] != 0) throw new CryptographicException("Non-zero padding detected");
-
-            byte[] Kfinal = new byte[mliFinal];
-            Array.Copy(R, 0, Kfinal, 0, (int)mliFinal);
-            return Kfinal;
-        }
-
-        private static Aes CreateEcbAes(byte[] key)
-        {
-            // Use FIPS-compliant AES provider
-            var aes = new AesCng
-            {
-                KeySize = key.Length * 8, // bits
-                Key = key,
-                Mode = CipherMode.ECB,
-                Padding = PaddingMode.None
-            };
-            return aes;
-        }
+        byte[] result = new byte[(n + 1) * BlockSize];
+        BinaryPrimitives.WriteUInt64BigEndian(result.AsSpan(0, 8), A);
+        Array.Copy(R, 0, result, 8, R.Length);
+        return result;
     }
 
+    /// <summary>
+    /// Unwraps a key using AES Key Wrap (RFC 3394).
+    /// </summary>
+    /// <param name="kek">Key encryption key (AES key, 128/192/256 bits)</param>
+    /// <param name="wrappedKey">Wrapped key</param>
+    /// <returns>Unwrapped key</returns>
+    public static byte[] Unwrap(byte[] kek, byte[] wrappedKey)
+    {
+        if (kek == null) throw new ArgumentNullException(nameof(kek));
+        if (wrappedKey == null || wrappedKey.Length < 16 || wrappedKey.Length % 8 != 0)
+            throw new ArgumentException("Invalid wrapped key length", nameof(wrappedKey));
 
-    public static class SimpleAesHmac
+        int n = wrappedKey.Length / BlockSize - 1;
+        byte[] R = new byte[n * BlockSize];
+        Array.Copy(wrappedKey, 8, R, 0, R.Length);
+        ulong A = BinaryPrimitives.ReadUInt64BigEndian(wrappedKey);
+
+        using var aes = CreateEcbAes(kek);
+        using var decryptor = aes.CreateDecryptor();
+
+        for (int j = 5; j >= 0; j--)
+        {
+            for (int i = n - 1; i >= 0; i--)
+            {
+                ulong t = (ulong)(n * j + (i + 1));
+                ulong Atemp = A ^ t;
+
+                byte[] B = new byte[16];
+                BinaryPrimitives.WriteUInt64BigEndian(B.AsSpan(0, 8), Atemp);
+                Array.Copy(R, i * BlockSize, B, 8, BlockSize);
+
+                var C = decryptor.TransformFinalBlock(B, 0, 16);
+                A = BinaryPrimitives.ReadUInt64BigEndian(C.AsSpan(0, 8));
+                Array.Copy(C, 8, R, i * BlockSize, BlockSize);
+            }
+        }
+
+        if (A != DefaultIv)
+            throw new CryptographicException("Integrity check failed.");
+
+        return R;
+    }
+
+    private static Aes CreateEcbAes(byte[] key)
+    {
+        return new AesCng
+        {
+            KeySize = key.Length * 8,
+            Key = key,
+            Mode = CipherMode.ECB,
+            Padding = PaddingMode.None
+        };
+    }
+}
+
+public static class SimpleAesHmac
     {
         public static byte[] Encrypt(byte[] key, byte[] hmacKey, byte[] input)
         {
@@ -437,247 +384,91 @@ internal abstract class FipsCrypto
         }
     }
 
-    public static class TpmAesPcrSeal
+public sealed class WrappedAesKeyStore : IDisposable
+{
+    private readonly string _keyName;
+    private readonly CngProvider _platform = CngProvider.MicrosoftPlatformCryptoProvider;
+    private CngKey? _rsaKey;
+
+    public WrappedAesKeyStore(string keyName)
     {
-    // Example PCRs to bind
-    private static readonly uint[] PcrsToBind = { 0, 7 };
+        _keyName = keyName ?? throw new ArgumentNullException(nameof(keyName));
+    }
 
-    // Example persistent handle for primary key
-    private static readonly TpmHandle PrimaryHandlePersist = new TpmHandle(0x81010001);
+    /// <summary>
+    /// Create (if needed) or open a TPM-backed RSA key and return it.
+    /// </summary>
+    private CngKey GetOrCreateTpmRsaKey(int keySizeBits = 2048)
+    {
+        if (CngKey.Exists(_keyName, _platform))
+            return CngKey.Open(_keyName, _platform);
 
-        /// <summary>
-        /// Creates and seals a 256-bit AES key bound to the specified PCRs.
-        /// Returns the private and public blobs for later loading.
-        /// </summary>
-        public static (TpmPrivate privateBlob, TpmPublic publicBlob) SealAesKey(byte[] aesKey)
+        var creationParams = new CngKeyCreationParameters
         {
-            if (aesKey == null || aesKey.Length != 32)
-                throw new ArgumentException("AES key must be 32 bytes (256-bit).", nameof(aesKey));
+            Provider = _platform,
+            KeyUsage = CngKeyUsages.Decryption,      // allow decrypt (private) operations
+            ExportPolicy = CngExportPolicies.None    // do not allow exporting private key
+        };
 
-            using var tpm = new Tpm2(new TbsDevice());
+        // Explicitly set length (many TPMs only accept 2048/3072)
+        creationParams.Parameters.Add(new CngProperty("Length", BitConverter.GetBytes(keySizeBits), CngPropertyOptions.None));
 
-            // 1) Create primary key (RSA 2048)
-            var primaryTemplate = new TpmPublic(
-                TpmAlgId.Sha256,
-                ObjectAttr.FixedTPM | ObjectAttr.FixedParent | ObjectAttr.SensitiveDataOrigin | ObjectAttr.UserWithAuth | ObjectAttr.Decrypt,
-                null,
-                new RsaParms(
-                    new SymDefObject(TpmAlgId.Aes, 256, TpmAlgId.Cfb),
-                    new NullAsymScheme(),
-                    2048,
-                    65537),
-                new Tpm2bPublicKeyRsa()
-            );
+        return CngKey.Create(CngAlgorithm.Rsa, _keyName, creationParams);
+    }
 
-            var primaryHandle = tpm.CreatePrimary(
-                TpmRh.Owner,
-                new SensitiveCreate(),
-                primaryTemplate,
-                null,
-                new PcrSelection[0],
-                out TpmPublic outPublic,
-                out CreationData creationData,
-                out byte[] creationHash,
-                out TkCreation creationTicket
-            );
-
-            // 2) Start a policy session for PCR binding
-            var session = tpm.StartAuthSessionEx(TpmSe.Policy, TpmAlgId.Sha256);
-            var pcrSelection = new PcrSelection(TpmAlgId.Sha256, PcrsToBind);
-            tpm.PolicyPCR(session, new byte[32], new[] { pcrSelection });
-            byte[] policyDigest = tpm.PolicyGetDigest(session);
-
-
-            // 3) Create sealed object with your AES key
-            var sealTemplate = new TpmPublic(
-            TpmAlgId.Sha256,                           // Name algorithm
-            ObjectAttr.UserWithAuth | ObjectAttr.FixedParent | ObjectAttr.FixedTPM, // attributes
-            policyDigest,                              // authPolicy
-            new SymDefObject(TpmAlgId.Null, 0, TpmAlgId.Null),      // <--- IPublicParmsUnion
-            new Tpm2bDigestKeyedhash()                 // unique field
-        );
-
-            var sens = new SensitiveCreate(the_userAuth: new byte[0], the_data: aesKey);
-
-            TpmPrivate privateBlob = tpm.Create(
-                primaryHandle,
-                sens,
-                sealTemplate,
-                null,
-                new PcrSelection[0],
-                out TpmPublic publicBlob,
-                out CreationData creationData2,
-                out byte[] hash2,
-                out TkCreation ticket2
-            );
-
-            Console.WriteLine("AES key sealed to PCRs " + string.Join(",", PcrsToBind));
-
-            tpm.FlushContext(primaryHandle);
-
-            return (privateBlob, publicBlob);
-        }
-
-
-        /// <summary>
-        /// Loads a sealed object and unseals the AES key if PCR policy matches.
-        /// </summary>
-        public static byte[] UnsealAesKey(TpmPrivate privateBlob, TpmPublic publicBlob)
+    /// <summary>
+    /// RSA-encrypt (TPM-backed) the RFC-wrapped AES key. Returns the RSA-encrypted blob which the caller should persist.
+    /// </summary>
+    /// <param name="rfcWrappedKey">AES key already wrapped with RFC3394/5649 (your "wrappedKey")</param>
+    public byte[] SealWrappedKey(byte[] rfcWrappedKey)
     {
-        using var tpm = new Tpm2(new TbsDevice());
+        if (rfcWrappedKey == null || rfcWrappedKey.Length == 0) throw new ArgumentNullException(nameof(rfcWrappedKey));
 
-        // 1) Create primary key (same template as sealing)
-        var primaryTemplate = new TpmPublic(
-            TpmAlgId.Sha256,
-            ObjectAttr.FixedTPM | ObjectAttr.FixedParent | ObjectAttr.SensitiveDataOrigin | ObjectAttr.UserWithAuth | ObjectAttr.Decrypt,
-            null,
-            new RsaParms(
-                new SymDefObject(TpmAlgId.Aes, 256, TpmAlgId.Cfb),
-                new NullAsymScheme(),
-                2048,
-                65537),
-            new Tpm2bPublicKeyRsa()
-        );
+        // create or open TPM-backed RSA key
+        _rsaKey ??= GetOrCreateTpmRsaKey();
 
-        var primaryHandle = tpm.CreatePrimary(
-            TpmRh.Owner,
-            new SensitiveCreate(),
-            primaryTemplate,
-            null,
-            new PcrSelection[0],
-            out TpmPublic outPublic,
-            out CreationData creationData,
-            out byte[] creationHash,
-            out TkCreation creationTicket
-        );
+        using var rsa = new RSACng(_rsaKey);
+        // Encrypt with RSA-OAEP-SHA256. RSA public operation can be done without pin.
+        byte[] rsaEncrypted = rsa.Encrypt(rfcWrappedKey, RSAEncryptionPadding.OaepSHA256);
 
-        // 2) Load sealed object
-        var sealedHandle = tpm.Load(primaryHandle, privateBlob, publicBlob);
+        // The caller should persist rsaEncrypted (e.g. write to JSON/DB)
+        return rsaEncrypted;
+    }
 
-        // 3) Start policy session and apply PCR policy
-        var session = tpm.StartAuthSessionEx(TpmSe.Policy, TpmAlgId.Sha256);
-        var pcrSelection = new PcrSelection(TpmAlgId.Sha256, PcrsToBind);
-        tpm.PolicyPCR(session, new byte[32], new[] { pcrSelection });
+    /// <summary>
+    /// RSA-decrypt (TPM-backed) the blob, then RFC-unwrap with KEK to get AES key.
+    /// </summary>
+    /// <param name="rsaEncryptedBlob">bytes previously returned by SealWrappedKey (RSA-encrypted RFC-wrapped AES key)</param>
+    /// <param name="kek">KEK used for RFC unwrap</param>
+    public byte[] UnsealKey(byte[] rsaEncryptedBlob, byte[] kek)
+    {
+        if (rsaEncryptedBlob == null || rsaEncryptedBlob.Length == 0) throw new ArgumentNullException(nameof(rsaEncryptedBlob));
+        if (kek == null || kek.Length == 0) throw new ArgumentNullException(nameof(kek));
 
-        // 4) Unseal AES key using session
-        byte[] aesKey = tpm.Unseal(sealedHandle);
+        if (!CngKey.Exists(_keyName, _platform))
+            throw new InvalidOperationException("TPM-backed RSA key not found.");
 
-        // 5) Cleanup
-        tpm.FlushContext(sealedHandle);
-        tpm.FlushContext(primaryHandle);
+        using var rsaKey = CngKey.Open(_keyName, _platform);
+        using var rsa = new RSACng(rsaKey);
 
-        Console.WriteLine("AES key successfully unsealed.");
+        // Step 1: RSA decrypt via TPM
+        byte[] rfcWrapped = rsa.Decrypt(rsaEncryptedBlob, RSAEncryptionPadding.OaepSHA256);
+
+        // Step 2: RFC unwrap to get the raw AES key
+        byte[] aesKey = AesKeyWrapRfc3394.Unwrap(kek, rfcWrapped);
+
+        // zero temporary sensitive buffers
+        CryptographicOperations.ZeroMemory(rfcWrapped);
 
         return aesKey;
     }
+
+    public void Dispose()
+    {
+        _rsaKey?.Dispose();
+        _rsaKey = null;
+    }
 }
 
-
-public class Tpm2PcrSeal
-    {
-        // PCRs to bind (example: 0 and 7)
-        static uint[] pcrIndices = { 0, 7 };
-        static TpmHandle persHandle = new TpmHandle(0x81010001); // your persistent handle
-        // Connect to TPM
-        public static void Tpm()
-        {
-            using var tpm = new Tpm2(new TbsDevice());
-            var tpmSafe = tpm._AllowErrors();
-            TpmPublic pub = tpmSafe.ReadPublic(persHandle, out byte[] name, out byte[] qualifiedName);
-
-            if (pub == null)
-            {
-                Console.WriteLine("ReadPublic failed, handle might not exist.");
-            }
-            else
-            {
-                Console.WriteLine("Successfully read public part of key.");
-            }
-
-            // 1) Create primary storage key
-            TpmPublic primaryTemplate = new TpmPublic(
-            TpmAlgId.Sha256,
-            ObjectAttr.FixedTPM | ObjectAttr.FixedParent | ObjectAttr.SensitiveDataOrigin | ObjectAttr.UserWithAuth | ObjectAttr.Decrypt,
-            null,
-            new RsaParms(
-                new SymDefObject(TpmAlgId.Aes, 256, TpmAlgId.Cfb),
-                new NullAsymScheme(),
-                2048,
-                65537),
-            new Tpm2bPublicKeyRsa()
-        );
-
-            var primaryHandle = tpm.CreatePrimary(
-                TpmRh.Owner,
-                new SensitiveCreate(),
-                primaryTemplate,
-                null,
-                new PcrSelection[0],
-                out TpmPublic outPublic,
-                out CreationData creationHash,
-                out byte[] creationTicket,
-                out TkCreation creation
-            );
-
-            Console.WriteLine("Primary key handle: 0x" + primaryHandle.handle.ToString("X"));
-
-            // 2) Start policy session
-            var sessionHandle = tpm.StartAuthSessionEx(TpmSe.Policy, TpmAlgId.Sha256);
-
-            // Set PCR policy
-            var pcrSelection = new PcrSelection(TpmAlgId.Sha256, pcrIndices);
-            tpm.PolicyPCR(sessionHandle, new byte[32], new[] { pcrSelection });
-
-            // Get policy digest
-            byte[] policyDigest = tpm.PolicyGetDigest(sessionHandle);
-            Console.WriteLine("Policy digest: " + BitConverter.ToString(policyDigest));
-
-            // 3) Create sealed object
-            var sens = new SensitiveCreate();
-
-
-            TpmPublic sealTemplate = new TpmPublic(
-                TpmAlgId.Sha256,
-                ObjectAttr.UserWithAuth | ObjectAttr.FixedParent | ObjectAttr.FixedTPM,
-                policyDigest, primaryTemplate.parameters, primaryTemplate.unique
-            );
-
-            TpmPrivate privateBlob = tpm.Create(
-                primaryHandle,
-                sens,
-                sealTemplate,
-                null,
-                new PcrSelection[0],
-                out TpmPublic publicBlob,
-                out CreationData creationData,
-                out byte[] hash,
-                out TkCreation c
-            );
-
-            Console.WriteLine("Sealed object created.");
-
-            // 4) Load sealed object
-            var sealedHandle = tpm.Load(primaryHandle, privateBlob, publicBlob);
-            Console.WriteLine("Sealed object handle: 0x" + sealedHandle.handle.ToString("X"));
-
-            var session = tpm.StartAuthSessionEx(TpmSe.Policy, TpmAlgId.Sha256);
-
-            // Apply PCR policy
-            pcrSelection = new PcrSelection(TpmAlgId.Sha256, new uint[] { 0, 7 });
-            tpm.PolicyPCR(session, new byte[32], new[] { pcrSelection });
-
-            // Unseal
-            byte[] aesKey = tpm.Unseal(sealedHandle);
-            Console.WriteLine("AES key: " + BitConverter.ToString(aesKey));
-
-
-            // 7) Clean up
-            tpm.FlushContext(sealedHandle);
-            tpm.FlushContext(primaryHandle);
-            tpm.FlushContext(sessionHandle);
-
-            Console.WriteLine("Done.");
-        }
-    }
 }
   

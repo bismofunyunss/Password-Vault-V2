@@ -41,21 +41,38 @@ public partial class Vault : UserControl
     /// <exception cref="ArgumentNullException">Thrown if <paramref name="vaultBytes"/> or <paramref name="masterKey"/> is null.</exception>
     private static async Task<byte[]> EncryptVaultWithSalt(byte[] vaultBytes, byte[] masterKey)
     {
+        if (vaultBytes == null || masterKey == null)
+            throw new ArgumentNullException("Vault bytes or master key cannot be null.");
+
+        // Generate a per-vault salt
         var hkdfSalt = CryptoUtilities.RndByteSized(CryptoConstants.SaltSize);
 
-        // Derive vault key using the per-vault salt
+        // Derive the per-vault AES key from the master key
         var vaultKey = Crypto.HKDF.HkdfDerivePinned(masterKey, hkdfSalt, "vault key"u8.ToArray(), CryptoConstants.KeySize);
+        
+        byte[] encryptedVault;
 
-        // Pass hkdfSalt to EncryptFile
-        var encryptedVault = await EncryptFile(vaultBytes, vaultKey, hkdfSalt);
+        if (FipsCrypto.FipsEnabled)
+        {
+            // FIPS path: AES-HMAC encryption
+            var hmacKey = FipsCrypto.Hkdf.DeriveKey(masterKey, hkdfSalt, "hmac key"u8.ToArray(), 32);
+            encryptedVault = FipsCrypto.SimpleAesHmac.Encrypt(vaultKey, hmacKey, vaultBytes);
+        }
+        else
+        {
+            // Non-FIPS path: standard encryption
+            encryptedVault = await EncryptFile(vaultBytes, vaultKey, hkdfSalt);
+        }
 
-        // Prepend salt to encrypted vault
+        // Prepend the salt to the ciphertext
         var result = hkdfSalt.Concat(encryptedVault).ToArray();
 
+        // Clear sensitive buffers
         CryptoUtilities.ClearMemoryNative(vaultKey, vaultBytes, encryptedVault);
 
         return result;
     }
+
 
     /// <summary>
     /// Decrypts the encrypted vault data by extracting the salt, deriving the vault key with HKDF,
@@ -69,26 +86,44 @@ public partial class Vault : UserControl
     /// <exception cref="ArgumentNullException">Thrown if <paramref name="encryptedVault"/> or <paramref name="masterKey"/> is null.</exception>
     private static async Task<byte[]> DecryptVaultWithSalt(byte[] encryptedVault, byte[] masterKey)
     {
-        if (encryptedVault is { Length: < CryptoConstants.SaltSize })
+        if (encryptedVault == null || masterKey == null)
+            throw new ArgumentNullException("Encrypted vault or master key cannot be null.");
+
+        if (encryptedVault.Length < CryptoConstants.SaltSize)
             throw new InvalidOperationException("Encrypted data is too short to contain a valid salt.");
 
+        // Extract per-vault salt
         var hkdfSalt = new byte[CryptoConstants.SaltSize];
         Buffer.BlockCopy(encryptedVault, 0, hkdfSalt, 0, hkdfSalt.Length);
 
+        // Extract ciphertext (everything after the salt)
         var ciphertextLength = encryptedVault.Length - hkdfSalt.Length;
         var ciphertext = new byte[ciphertextLength];
         Buffer.BlockCopy(encryptedVault, hkdfSalt.Length, ciphertext, 0, ciphertextLength);
 
-        // Derive vault key using same salt
+        // Derive per-vault AES key from master key
         var vaultKey = Crypto.HKDF.HkdfDerivePinned(masterKey, hkdfSalt, "vault key"u8.ToArray(), CryptoConstants.KeySize);
 
-        // Pass salt to DecryptFile
-        var decryptedBytes = await DecryptFile(ciphertext, vaultKey, hkdfSalt);
+        byte[] decryptedBytes;
+
+        if (FipsCrypto.FipsEnabled)
+        {
+            // FIPS path: derive HMAC key and decrypt with AES-HMAC
+            var hmacKey = FipsCrypto.Hkdf.DeriveKey(masterKey, hkdfSalt, "hmac key"u8.ToArray(), 32);
+            decryptedBytes = FipsCrypto.SimpleAesHmac.Decrypt(vaultKey, hmacKey, ciphertext);
+            CryptoUtilities.ClearMemoryNative(hmacKey);
+        }
+        else
+        {
+            // Non-FIPS path: standard decryption
+            decryptedBytes = await DecryptFile(ciphertext, vaultKey, hkdfSalt);
+        }
 
         CryptoUtilities.ClearMemoryNative(vaultKey, ciphertext);
 
         return decryptedBytes;
     }
+
 
     /// <summary>
     /// Loads and decrypts the current user's vault file into the password vault UI table.

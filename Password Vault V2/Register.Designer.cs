@@ -32,6 +32,7 @@ namespace Password_Vault_V2
             emailLbl = new Label();
             pictureBox1 = new PictureBox();
             WelcomeLabel = new Label();
+            button1 = new Button();
             RegisterBox.SuspendLayout();
             ((ISupportInitialize)pictureBox1).BeginInit();
             SuspendLayout();
@@ -141,6 +142,7 @@ namespace Password_Vault_V2
             // RegisterBox
             // 
             RegisterBox.BackColor = Color.FromArgb(30, 30, 30);
+            RegisterBox.Controls.Add(button1);
             RegisterBox.Controls.Add(emailBox);
             RegisterBox.Controls.Add(emailLbl);
             RegisterBox.Controls.Add(pictureBox1);
@@ -234,6 +236,7 @@ namespace Password_Vault_V2
         private PictureBox pictureBox1;
         private Label emailLbl;
         private TextBox emailBox;
+        public Button button1;
     }
 
     #endregion

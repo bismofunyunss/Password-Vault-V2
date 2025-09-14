@@ -6,6 +6,7 @@ using System.Security.Cryptography;
 using Tpm2Lib;
 using static Password_Vault_V2.Crypto;
 using static Password_Vault_V2.FipsCrypto;
+using static Password_Vault_V2.SoftwareKeyStore;
 
 namespace Password_Vault_V2;
 
@@ -128,7 +129,7 @@ public sealed partial class PasswordVault : Form
 
         try
         {
-            var keyStore = new SoftwareKeyStore(UserFileManager.GetUserFolder(UsernameTxt.Text));
+            using var keyStore = new SoftwareKeyStore(UserFileManager.GetUserFolder(UsernameTxt.Text));
 
             var useFips = FipsEnabled;
 
@@ -164,9 +165,15 @@ public sealed partial class PasswordVault : Form
             else
                 VerifyPasswordFips(passwordBytes, parts[0], segments.HashSalt);
 
+
+            MasterKeyEntry entry = keyStore.GetLatestKey(); // or version=null for latest
+            byte[] rsaEncryptedFromStore = DataConversionHelpers.HexStringToByteArray(entry.WrappedKey);
+
+            using var wrappedStore = new WrappedAesKeyStore("MyTpmRsaKey");
+   
             // Decrypt master key
             decryptedMasterKey = useFips
-                ? keyStore.RetrieveMasterKey(keys.IntermediateKey, 1)
+                ? wrappedStore.UnsealKey(rsaEncryptedFromStore, keys.IntermediateKey)
                 : await DecryptFile(parts[3], keys.IntermediateKey, segments.MasterKeySalt);
 
             // Secure master key
@@ -174,7 +181,6 @@ public sealed partial class PasswordVault : Form
 
             // Finish login
             await HandleLogin();
-
         }
         finally
         {
