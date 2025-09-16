@@ -1,12 +1,10 @@
-using System.Buffers.Binary;
 using System.Diagnostics;
 using System.Drawing.Drawing2D;
 using System.Runtime.InteropServices;
 using System.Security.Cryptography;
-using Tpm2Lib;
+using OtpNet;
 using static Password_Vault_V2.Crypto;
 using static Password_Vault_V2.FipsCrypto;
-using static Password_Vault_V2.SoftwareKeyStore;
 
 namespace Password_Vault_V2;
 
@@ -57,6 +55,33 @@ public sealed partial class PasswordVault : Form
         public CancellationToken RainbowLabelToken => RainbowTokenSource.Token;
     }
 
+    public class FileSegments
+    {
+        public byte[] Hmac { get; set; } = Array.Empty<byte>();
+        public byte[] HmacSalt { get; set; } = Array.Empty<byte>();
+        public byte[] DerivedHmacSalt { get; set; } = Array.Empty<byte>();
+        public byte[] FileSalt { get; set; } = Array.Empty<byte>();
+        public byte[] FileKeySalt { get; set; } = Array.Empty<byte>();
+        public byte[] EncryptionKeySalt { get; set; } = Array.Empty<byte>();
+        public byte[] Uuid { get; set; } = Array.Empty<byte>();
+        public byte[] HashSalt { get; set; } = Array.Empty<byte>();
+        public byte[] MasterKeySalt { get; set; } = Array.Empty<byte>();
+        public byte[] MasterKeyEncryptionSalt { get; set; } = Array.Empty<byte>();
+        public byte[] KeyDerivationSalt { get; set; } = Array.Empty<byte>();
+        public byte[] IntermediateKeySalt { get; set; } = Array.Empty<byte>();
+        public byte[] KwDerivedHmacSalt { get; set; } = Array.Empty<byte>();
+        public byte[] KwHmacSalt { get; set; } = Array.Empty<byte>();
+        public byte[] EncryptedFile { get; set; } = Array.Empty<byte>();
+    }
+
+    public class DerivedKeys
+    {
+        public byte[] HmacKey { get; init; } = Array.Empty<byte>();
+        public byte[] EncryptionKey { get; init; } = Array.Empty<byte>();
+        public byte[] IntermediateKey { get; init; } = Array.Empty<byte>();
+        public byte[]? KwHmacKey { get; init; }
+    }
+
     #endregion
 
     #region Methods
@@ -65,8 +90,32 @@ public sealed partial class PasswordVault : Form
 
     private async void BtnLogin_Click(object sender, EventArgs e)
     {
+        using var keyStore = new SoftwareKeyStore(UserFileManager.GetUserFolder(UsernameTxt.Text.Trim()));
+        var secret = keyStore.GetTotpSecret(UsernameTxt.Text.Trim());
+
+        if (secret == null)
+        {
+            MessageBox.Show("TOTP secret not found.", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            return;
+        }
+
         try
         {
+            // Only digits from input
+            var codeEntered = new string(verifyTxt.Text.Where(char.IsDigit).ToArray());
+
+            //var totp = new Totp(secret, step: 30, totpSize: 6);
+            var totp = new Totp(secret, step: 30, totpSize: 6);
+            var window = new VerificationWindow(previous: 1, future: 1);
+            var valid = totp.VerifyTotp(codeEntered, out long timeStepMatched, window);
+
+            if (!valid)
+            {
+                MessageBox.Show($"Invalid TOTP code.",
+                    "Login Failed", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                return;
+            }
+
             var result = await WindowsHello.RequestWindowsHelloSignInAsync();
             if (!result)
             {
@@ -93,6 +142,7 @@ public sealed partial class PasswordVault : Form
         finally
         {
             ClearPasswordBuffer();
+            CryptographicOperations.ZeroMemory(secret);
         }
     }
 
@@ -136,45 +186,47 @@ public sealed partial class PasswordVault : Form
             // Load and parse file
             var userFile = await LoadUserFile(UsernameTxt.Text, useFips);
 
-            var segments = useFips
+            var fileSegments = new FileSegments();
+
+            fileSegments = useFips
                 ? ExtractFileSegmentsFips(userFile)
                 : ExtractFileSegmentsNonFips(userFile);
 
             // Derive keys
             var keys = useFips
-                ? await DeriveKeysFips(passwordBytes, segments)
-                : await DeriveKeys(passwordBytes, segments);
+                ? await DeriveKeysFips(passwordBytes, fileSegments)
+                : await DeriveKeys(passwordBytes, fileSegments);
+
 
             if (!useFips)
-                ValidateHmac(segments.EncryptedFile, keys.HmacKey, segments.Hmac);
+                ValidateHmac(fileSegments.EncryptedFile, keys.HmacKey, fileSegments.Hmac);
 
             // Dont need to validate hmac with FIPS since the internal decrypt will throw on mismatch.
 
-                // Decrypt main file
-                decryptedBytes = useFips
-                    ? SimpleAesHmac.Decrypt(keys.EncryptionKey, keys.HmacKey, segments.EncryptedFile)
-                    : await DecryptFile(segments.EncryptedFile, keys.EncryptionKey, segments.FileSalt);
+            // Decrypt main file
+            decryptedBytes = useFips
+                ? SimpleAesHmac.Decrypt(keys.EncryptionKey, keys.HmacKey, fileSegments.EncryptedFile)
+                : await DecryptFile(fileSegments.EncryptedFile, keys.EncryptionKey, fileSegments.FileSalt);
 
             // Parse decrypted file
             var parts = ParseUserFile(decryptedBytes);
 
             // Verify identity
-            VerifyUuid(parts[1], segments.Uuid);
+            VerifyUuid(parts[1], fileSegments.Uuid);
             if (!useFips)
-                VerifyPassword(passwordBytes, parts[0], segments.HashSalt);
+                await VerifyPassword(passwordBytes, parts[0], fileSegments.HashSalt);
             else
-                VerifyPasswordFips(passwordBytes, parts[0], segments.HashSalt);
+                await VerifyPasswordFips(passwordBytes, parts[0], fileSegments.HashSalt);
 
 
-            MasterKeyEntry entry = keyStore.GetLatestKey(); // or version=null for latest
-            byte[] rsaEncryptedFromStore = DataConversionHelpers.HexStringToByteArray(entry.WrappedKey);
+            var entry = keyStore.GetLatestKey();
+            var rsaEncryptedFromStore = DataConversionHelpers.HexStringToByteArray(entry.WrappedKey);
 
-            using var wrappedStore = new WrappedAesKeyStore("MyTpmRsaKey");
-   
+            using var wrappedAesKeyStore = new WrappedAesKeyStore("MyTpmRsaKey");
             // Decrypt master key
             decryptedMasterKey = useFips
-                ? wrappedStore.UnsealKey(rsaEncryptedFromStore, keys.IntermediateKey)
-                : await DecryptFile(parts[3], keys.IntermediateKey, segments.MasterKeySalt);
+                ? wrappedAesKeyStore.UnsealKey(rsaEncryptedFromStore, keys.IntermediateKey, keys.KwHmacKey)
+                : await DecryptFile(parts[3], keys.IntermediateKey, fileSegments.MasterKeySalt);
 
             // Secure master key
             MasterKey.SecureKey(decryptedMasterKey);
@@ -191,7 +243,7 @@ public sealed partial class PasswordVault : Form
             StatusOutputLabel.Text = "Idle...";
             StatusOutputLabel.ForeColor = Color.White;
             PasswordTxt.Clear();
-
+            verifyTxt.Clear();
             GC.Collect(GC.MaxGeneration, GCCollectionMode.Aggressive, true, true);
             GC.WaitForPendingFinalizers();
         }
@@ -224,14 +276,14 @@ public sealed partial class PasswordVault : Form
         if (userFile == null) throw new ArgumentNullException(nameof(userFile));
 
         var segments = new List<byte[]>();
-        int offset = 0;
+        var offset = 0;
 
         while (offset < userFile.Length)
         {
             if (offset + 4 > userFile.Length)
                 throw new CryptographicException("Corrupted user file: cannot read segment length.");
 
-            int length = BitConverter.ToInt32(userFile, offset); // little-endian
+            var length = BitConverter.ToInt32(userFile, offset); // little-endian
             offset += 4;
 
             if (length < 0 || offset + length > userFile.Length)
@@ -276,7 +328,7 @@ public sealed partial class PasswordVault : Form
 
     #region File & Key Handling
 
-    private async Task<byte[]> LoadUserFile(string username, bool useFips)
+    private static async Task<byte[]> LoadUserFile(string username, bool useFips)
     {
         var path = UserFileManager.GetUserFilePath(username);
         var file = await IO.ReadFile(path);
@@ -291,13 +343,10 @@ public sealed partial class PasswordVault : Form
         return file;
     }
 
-    private (byte[] Hmac, byte[] HmacSalt, byte[] DerivedHmacSalt,
-            byte[] FileSalt, byte[] FileKeySalt, byte[] EncryptionKeySalt,
-            byte[] Uuid, byte[] HashSalt, byte[] MasterKeySalt, byte[] MasterKeyEncryptionSalt,
-            byte[] KeyDerivationSalt, byte[] IntermediateKeySalt, byte[] EncryptedFile)
-       ExtractFileSegmentsNonFips(byte[] file)
+    private static FileSegments ExtractFileSegmentsNonFips(byte[] file)
     {
-        int offset = 0;
+        var offset = 0;
+
         byte[] ReadSegment(int length)
         {
             var segment = new byte[length];
@@ -322,19 +371,28 @@ public sealed partial class PasswordVault : Form
         var encryptedFile = new byte[file.Length - offset];
         Buffer.BlockCopy(file, offset, encryptedFile, 0, encryptedFile.Length);
 
-        return (hmac, hmacSalt, derivedHmacSalt, fileSalt, fileKeySalt, encryptionKeySalt,
-                uuid, hashSalt, masterKeySalt, masterKeyEncryptionSalt,
-                keyDerivationSalt, intermediateKeySalt, encryptedFile);
+        return new FileSegments
+        {
+            Hmac = hmac,
+            HmacSalt = hmacSalt,
+            DerivedHmacSalt = derivedHmacSalt,
+            FileSalt = fileSalt,
+            FileKeySalt = fileKeySalt,
+            EncryptionKeySalt = encryptionKeySalt,
+            Uuid = uuid,
+            HashSalt = hashSalt,
+            MasterKeySalt = masterKeySalt,
+            MasterKeyEncryptionSalt = masterKeyEncryptionSalt,
+            KeyDerivationSalt = keyDerivationSalt,
+            IntermediateKeySalt = intermediateKeySalt,
+            EncryptedFile = encryptedFile
+        };
     }
 
-    private (byte[] Hmac, byte[] HmacSalt, byte[] DerivedHmacSalt,
-             byte[] FileSalt, byte[] FileKeySalt, byte[] EncryptionKeySalt,
-             byte[] Uuid, byte[] HashSalt, byte[] MasterKeySalt, byte[] MasterKeyEncryptionSalt,
-             byte[] KeyDerivationSalt, byte[] IntermediateKeySalt, byte[] EncryptedFile)
-        ExtractFileSegmentsFips(byte[] file)
+    private static FileSegments ExtractFileSegmentsFips(byte[] file)
     {
-        int offset = 0;
-        int saltSize = 32; // PBKDF2 FIPS salts
+        var offset = 0;
+        var saltSize = 32; // PBKDF2 FIPS salts
 
         byte[] ReadSegment(int length)
         {
@@ -354,6 +412,8 @@ public sealed partial class PasswordVault : Form
         var masterKeyEncryptionSalt = ReadSegment(saltSize);
         var keyDerivationSalt = ReadSegment(saltSize);
         var intermediateKeySalt = ReadSegment(saltSize);
+        var kwDerivedHmacSalt = ReadSegment(saltSize);
+        var kwHmacSalt = ReadSegment(saltSize);
 
         // The remaining bytes are the HMAC + IV + ciphertext
         var encryptedFile = new byte[file.Length - offset];
@@ -362,62 +422,85 @@ public sealed partial class PasswordVault : Form
         // For FIPS, HMAC is embedded at start of encryptedFile (inside SimpleAesHmac)
         byte[] hmac = null; // handled inside SimpleAesHmac.Decrypt
 
-        return (hmac, hmacSalt, derivedHmacSalt, fileSalt, fileKeySalt, encryptionKeySalt,
-            uuid, hashSalt, null, masterKeyEncryptionSalt,
-            keyDerivationSalt, intermediateKeySalt, encryptedFile)!;
+        return new FileSegments
+        {
+            Hmac = null, // handled internally
+            HmacSalt = hmacSalt,
+            DerivedHmacSalt = derivedHmacSalt,
+            FileSalt = fileSalt,
+            FileKeySalt = fileKeySalt,
+            EncryptionKeySalt = encryptionKeySalt,
+            Uuid = uuid,
+            HashSalt = hashSalt,
+            MasterKeyEncryptionSalt = masterKeyEncryptionSalt,
+            KeyDerivationSalt = keyDerivationSalt,
+            IntermediateKeySalt = intermediateKeySalt,
+            KwDerivedHmacSalt = kwDerivedHmacSalt,
+            KwHmacSalt = kwHmacSalt,
+            EncryptedFile = encryptedFile
+        };
     }
 
-
-
-
-    private async Task<(byte[] HmacKey, byte[] EncryptionKey, byte[] IntermediateKey)>
-        DeriveKeys(byte[] password,
-            (byte[] Hmac, byte[] HmacSalt, byte[] DerivedHmacSalt,
-                byte[] FileSalt, byte[] FileKeySalt, byte[] EncryptionKeySalt,
-                byte[] Uuid, byte[] HashSalt, byte[] MasterKeySalt, byte[] MasterKeyDerivationSalt,
-                byte[] KeyDerivationSalt, byte[] IntermediateKeySalt,
-                byte[] EncryptedFile) segments)
+    private static async Task<DerivedKeys>
+        DeriveKeys(byte[] password, FileSegments fileSegments)
     {
         var passwordDerivedKey =
-            await HashingMethods.Argon2Id(password, segments.KeyDerivationSalt, CryptoConstants.KeySize);
-        var derivedFileKey = await HashingMethods.Argon2Id(password, segments.FileKeySalt, CryptoConstants.KeySize);
-        var derivedHmacKey = await HashingMethods.Argon2Id(password, segments.DerivedHmacSalt, CryptoConstants.KeySize);
+            await HashingMethods.Argon2Id(password, fileSegments.KeyDerivationSalt, CryptoConstants.KeySize);
+        var derivedFileKey =
+            await HashingMethods.Argon2Id(password, fileSegments.FileKeySalt, CryptoConstants.KeySize);
+        var derivedHmacKey =
+            await HashingMethods.Argon2Id(password, fileSegments.DerivedHmacSalt, CryptoConstants.HmacLength);
+        var derivedKeyHmac =
+            await HashingMethods.Argon2Id(password, fileSegments.KwDerivedHmacSalt, CryptoConstants.HmacLength);
 
-        var hmacKey = Crypto.HKDF.HkdfDerivePinned(derivedHmacKey, segments.HmacSalt, "hmac key"u8.ToArray(),
+        var hmacKey = Crypto.HKDF.HkdfDerivePinned(derivedHmacKey, fileSegments.HmacSalt, "hmac key"u8.ToArray(),
             CryptoConstants.HmacLength);
-        var intermediateKey = Crypto.HKDF.HkdfDerivePinned(passwordDerivedKey, segments.IntermediateKeySalt,
+        var intermediateKey = Crypto.HKDF.HkdfDerivePinned(passwordDerivedKey, fileSegments.IntermediateKeySalt,
             "intermediate key"u8.ToArray(), CryptoConstants.KeySize);
-        var encryptionKey = Crypto.HKDF.HkdfDerivePinned(derivedFileKey, segments.EncryptionKeySalt,
+        var encryptionKey = Crypto.HKDF.HkdfDerivePinned(derivedFileKey, fileSegments.EncryptionKeySalt,
             "encryption key"u8.ToArray(), CryptoConstants.KeySize);
+        var kwHmacKey = Crypto.HKDF.HkdfDerivePinned(derivedKeyHmac, fileSegments.KwHmacSalt, "kw hmac key"u8.ToArray(),
+            CryptoConstants.HmacLength);
 
-        return (hmacKey, encryptionKey, intermediateKey);
+        return new DerivedKeys
+        {
+            HmacKey = hmacKey,
+            EncryptionKey = encryptionKey,
+            IntermediateKey = intermediateKey,
+            KwHmacKey = kwHmacKey
+        };
     }
 
-    private async Task<(byte[] HmacKey, byte[] EncryptionKey, byte[] IntermediateKey)>
-        DeriveKeysFips(byte[] password,
-            (byte[] Hmac, byte[] HmacSalt, byte[] DerivedHmacSalt,
-                byte[] FileSalt, byte[] FileKeySalt, byte[] EncryptionKeySalt,
-                byte[] Uuid, byte[] HashSalt, byte[] MasterKeySalt, byte[] MasterKeyEncryptionSalt,
-                byte[] KeyDerivationSalt, byte[] IntermediateKeySalt,
-                byte[] EncryptedFile) segments)
+    private static async Task<DerivedKeys>
+        DeriveKeysFips(byte[] password, FileSegments fileSegments)
     {
         // PBKDF2-HMAC-SHA256 for FIPS compliance
         var passwordDerivedKey =
-            Pbkdf2(password, segments.KeyDerivationSalt, CryptoConstants.KeySize);
+            await Pbkdf2(password, fileSegments.KeyDerivationSalt, CryptoConstants.KeySize);
         var derivedFileKey =
-            Pbkdf2(password, segments.FileKeySalt, CryptoConstants.KeySize);
+            await Pbkdf2(password, fileSegments.FileKeySalt, CryptoConstants.KeySize);
         var derivedHmacKey =
-            Pbkdf2(password, segments.DerivedHmacSalt, CryptoConstants.KeySize);
+            await Pbkdf2(password, fileSegments.DerivedHmacSalt, CryptoConstants.KeySize);
 
         // HKDF derivations (must be using FIPS-approved HMAC internally)
-        var hmacKey = Hkdf.DeriveKey(derivedHmacKey, segments.HmacSalt, "hmac key"u8.ToArray(),
+        var hmacKey = FipsHkdf.DeriveKey(derivedHmacKey, fileSegments.HmacSalt, "hmac key"u8.ToArray(),
             32);
-        var intermediateKey = Hkdf.DeriveKey(passwordDerivedKey, segments.IntermediateKeySalt,
+        var intermediateKey = FipsHkdf.DeriveKey(passwordDerivedKey, fileSegments.IntermediateKeySalt,
             "intermediate key"u8.ToArray(), CryptoConstants.KeySize);
-        var encryptionKey = Hkdf.DeriveKey(derivedFileKey, segments.EncryptionKeySalt,
+        var encryptionKey = FipsHkdf.DeriveKey(derivedFileKey, fileSegments.EncryptionKeySalt,
             "encryption key"u8.ToArray(), CryptoConstants.KeySize);
 
-        return (hmacKey, encryptionKey, intermediateKey);
+        //KW HMAC
+        var keyHmac = await Pbkdf2(password, fileSegments.KwDerivedHmacSalt, KeySize);
+        var wrappedKeyHmac = FipsHkdf.DeriveKey(keyHmac, fileSegments.KwHmacSalt, "kw hmac key"u8.ToArray(), 32);
+
+        return await Task.FromResult(new DerivedKeys
+        {
+            HmacKey = hmacKey,
+            EncryptionKey = encryptionKey,
+            IntermediateKey = intermediateKey,
+            KwHmacKey = wrappedKeyHmac
+        });
     }
 
 
@@ -434,7 +517,7 @@ public sealed partial class PasswordVault : Form
             throw new UnauthorizedAccessException("UUID does not match.");
     }
 
-    private async void VerifyPassword(byte[] password, byte[] storedHash, byte[] hashSalt)
+    private async Task VerifyPassword(byte[] password, byte[] storedHash, byte[] hashSalt)
     {
         var derivedHash = await HashingMethods.Argon2Id(password, hashSalt, CryptoConstants.HmacLength);
         if (!CryptoUtilities.ComparePassword(derivedHash, storedHash))
@@ -444,7 +527,7 @@ public sealed partial class PasswordVault : Form
     private async Task VerifyPasswordFips(byte[] password, byte[] storedHash, byte[] hashSalt)
     {
         // PBKDF2-HMAC-SHA512 with high iterations for compliance
-        var derivedHash = Pbkdf2(
+        var derivedHash = await Pbkdf2(
             password,
             hashSalt,
             32);
@@ -859,7 +942,7 @@ public sealed partial class PasswordVault : Form
     #region WindowAnimations
 
     [DllImport("user32.dll", SetLastError = true)]
-    [return: System.Runtime.InteropServices.MarshalAs(UnmanagedType.Bool)]
+    [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool AnimateWindow(IntPtr hWnd, int dwTime, AnimateWindowFlags flags);
 
 

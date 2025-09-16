@@ -226,7 +226,7 @@
             NewPassTxt.BackColor = Color.FromArgb(30, 30, 30);
             NewPassTxt.Font = new Font("Century Gothic", 11F, FontStyle.Regular, GraphicsUnit.Point, 0);
             NewPassTxt.ForeColor = Color.White;
-            NewPassTxt.Location = new Point(2, 120);
+            NewPassTxt.Location = new Point(4, 120);
             NewPassTxt.Name = "NewPassTxt";
             NewPassTxt.Size = new Size(438, 34);
             NewPassTxt.TabIndex = 19;

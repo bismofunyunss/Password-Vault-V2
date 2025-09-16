@@ -1,4 +1,5 @@
 ﻿using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 using OtpNet;
 
@@ -6,8 +7,8 @@ namespace Password_Vault_V2;
 
 public class SoftwareKeyStore : IDisposable
 {
-    private readonly string? _jsonPath;
     private readonly List<MasterKeyEntry> _entries = new();
+    private readonly string? _jsonPath;
     private readonly List<TotpSecretEntry> _totpEntries = new();
     private bool _disposed;
 
@@ -16,6 +17,42 @@ public class SoftwareKeyStore : IDisposable
         _jsonPath = Path.Combine(folderPath, fileName);
         if (File.Exists(_jsonPath))
             LoadJson();
+    }
+
+    #region IDisposable
+
+    public void Dispose()
+    {
+        if (!_disposed)
+        {
+            _entries.Clear();
+            _disposed = true;
+        }
+    }
+
+    #endregion
+
+    public class TwoFactorAuth
+    {
+        private readonly Totp _totp;
+        internal bool synced;
+
+        public TwoFactorAuth(byte[] secretKey)
+        {
+            // 30-second expiry, 6-digit codes
+            _totp = new Totp(secretKey);
+        }
+
+        public string GenerateCode()
+        {
+            return _totp.ComputeTotp(); // generate current 6-digit code
+        }
+
+        public bool VerifyCode(string code)
+        {
+            // Allow ±1 step drift to handle small clock skew
+            return _totp.VerifyTotp(code, out _, new VerificationWindow(1, 1));
+        }
     }
 
     #region MasterKeyEntry & JSON
@@ -28,42 +65,43 @@ public class SoftwareKeyStore : IDisposable
         public string Notes { get; set; } = "";
     }
 
-    private class TotpSecretEntry
-    {
-        public string Account { get; set; } = string.Empty; // e.g. username or email
-        public string WrappedSecret { get; set; } = string.Empty; // DPAPI or AES-encrypted blob
-        public DateTime Created { get; set; }
-        public string Notes { get; set; } = "";
-    }
-
     public void AddTotpSecret(string account, byte[] secret, string notes = "")
     {
-        // Generate new 32-byte salt
-        byte[] salt = RandomNumberGenerator.GetBytes(32);
+        if (secret == null || secret.Length != 20)
+            throw new ArgumentException("TOTP secret must be exactly 20 bytes.", nameof(secret));
 
-        // Encrypt with DPAPI for current user using the new salt
-        byte[] wrapped = ProtectedData.Protect(secret, salt, DataProtectionScope.CurrentUser);
+        // Optional: generate 32-byte DPAPI salt
+        var salt = RandomNumberGenerator.GetBytes(32);
 
-        // Combine salt + wrapped together for storage
-        byte[] final = new byte[salt.Length + wrapped.Length];
-        Buffer.BlockCopy(salt, 0, final, 0, salt.Length);
-        Buffer.BlockCopy(wrapped, 0, final, salt.Length, wrapped.Length);
+        var secretClone = (byte[])secret.Clone();
 
-        _totpEntries.Add(new TotpSecretEntry
+        // Encrypt secret with DPAPI for current user
+        var wrapped = ProtectedData.Protect(secretClone, salt, DataProtectionScope.CurrentUser);
+
+        try
         {
-            Account = account,
-            WrappedSecret = Convert.ToBase64String(final),
-            Created = DateTime.UtcNow,
-            Notes = notes
-        });
+            // Store salt + wrapped bytes together
+            var combined = new byte[salt.Length + wrapped.Length];
+            Buffer.BlockCopy(salt, 0, combined, 0, salt.Length);
+            Buffer.BlockCopy(wrapped, 0, combined, salt.Length, wrapped.Length);
 
-        // Wipe sensitive buffers
-        CryptographicOperations.ZeroMemory(wrapped);
-        CryptographicOperations.ZeroMemory(secret);
+            _totpEntries.Add(new TotpSecretEntry
+            {
+                Account = account,
+                WrappedSecret = Convert.ToBase64String(combined),
+                Created = DateTime.UtcNow,
+                Notes = notes
+            });
 
-        SaveJson();
+            SaveJson(); // your existing method to persist _totpEntries
+        }
+        finally
+        {
+            CryptographicOperations.ZeroMemory(secretClone);
+            CryptographicOperations.ZeroMemory(wrapped);
+            CryptographicOperations.ZeroMemory(salt);
+        }
     }
-
 
     public byte[]? GetTotpSecret(string account)
     {
@@ -72,28 +110,30 @@ public class SoftwareKeyStore : IDisposable
 
         try
         {
-            byte[] final = Convert.FromBase64String(entry.WrappedSecret);
+            var combined = Convert.FromBase64String(entry.WrappedSecret);
 
-            // Extract salt (first 32 bytes, for example)
             int saltLength = 32;
-            byte[] salt = new byte[saltLength];
-            Buffer.BlockCopy(final, 0, salt, 0, saltLength);
+            var salt = new byte[saltLength];
+            var wrapped = new byte[combined.Length - saltLength];
 
-            // Extract wrapped secret (rest of buffer)
-            int wrappedLength = final.Length - saltLength;
-            byte[] wrapped = new byte[wrappedLength];
-            Buffer.BlockCopy(final, saltLength, wrapped, 0, wrappedLength);
+            Buffer.BlockCopy(combined, 0, salt, 0, saltLength);
+            Buffer.BlockCopy(combined, saltLength, wrapped, 0, wrapped.Length);
 
-            // Decrypt with same salt
             return ProtectedData.Unprotect(wrapped, salt, DataProtectionScope.CurrentUser);
         }
-        catch
-        {
-            return null;
-        }
+        catch { return null; }
     }
 
-    private class StoreModel
+    private class TotpSecretEntry
+{
+    public string Account { get; set; } = string.Empty;
+    public string WrappedSecret { get; set; } = string.Empty;
+    public DateTime Created { get; set; }
+    public string Notes { get; set; } = "";
+}
+
+
+private class StoreModel
     {
         public List<MasterKeyEntry> MasterKeys { get; set; } = new();
         public List<TotpSecretEntry> TotpSecrets { get; set; } = new();
@@ -101,6 +141,12 @@ public class SoftwareKeyStore : IDisposable
 
     private void LoadJson()
     {
+        _entries.Clear();
+        _totpEntries.Clear();
+
+        if (!File.Exists(_jsonPath))
+            return;
+
         var json = File.ReadAllText(_jsonPath);
         var loaded = JsonSerializer.Deserialize<StoreModel>(json);
         if (loaded != null)
@@ -131,8 +177,6 @@ public class SoftwareKeyStore : IDisposable
         );
     }
 
-
-
     #endregion
 
     #region Key Management
@@ -142,7 +186,7 @@ public class SoftwareKeyStore : IDisposable
         if (wrappedKey == null || wrappedKey.Length == 0)
             throw new ArgumentNullException(nameof(wrappedKey));
 
-        int newVersion = _entries.Any() ? _entries.Max(e => e.Version) + 1 : 1;
+        var newVersion = _entries.Any() ? _entries.Max(e => e.Version) + 1 : 1;
 
         _entries.Add(new MasterKeyEntry
         {
@@ -158,9 +202,9 @@ public class SoftwareKeyStore : IDisposable
         CryptographicOperations.ZeroMemory(wrappedKey);
     }
 
-    public byte[] RetrieveMasterKey(byte[] kek, int? version = null)
+    public byte[] RetrieveMasterKey(byte[] kek, byte[] hmacKey, int? version = null)
     {
-        MasterKeyEntry entry = version.HasValue
+        var entry = version.HasValue
             ? _entries.FirstOrDefault(e => e.Version == version.Value)
             : _entries.OrderByDescending(e => e.Version).FirstOrDefault();
 
@@ -171,9 +215,9 @@ public class SoftwareKeyStore : IDisposable
         using var wrappedAesKey = new FipsCrypto.WrappedAesKeyStore("MyTpmRsaKey");
 
         // Pass RSA blob and KEK
-        byte[] masterKey = wrappedAesKey.UnsealKey(
+        var masterKey = wrappedAesKey.UnsealKey(
             DataConversionHelpers.HexStringToByteArray(entry.WrappedKey),
-            kek);
+            kek, hmacKey);
 
         CryptographicOperations.ZeroMemory(kek);
         return masterKey;
@@ -184,44 +228,15 @@ public class SoftwareKeyStore : IDisposable
         AddNewMasterKey(newMasterKey, notes);
     }
 
-    public MasterKeyEntry GetLatestKey() => _entries.OrderByDescending(e => e.Version).FirstOrDefault();
-    public MasterKeyEntry GetKeyByVersion(int version) => _entries.FirstOrDefault(e => e.Version == version);
-
-    #endregion
-
-    #region IDisposable
-
-    public void Dispose()
+    public MasterKeyEntry GetLatestKey()
     {
-        if (!_disposed)
-        {
-            _entries.Clear();
-            _disposed = true;
-        }
+        return _entries.OrderByDescending(e => e.Version).FirstOrDefault();
+    }
+
+    public MasterKeyEntry GetKeyByVersion(int version)
+    {
+        return _entries.FirstOrDefault(e => e.Version == version);
     }
 
     #endregion
-
-    public class TwoFactorAuth
-    {
-        private readonly Totp _totp;
-        internal bool synced;
-        public TwoFactorAuth(byte[] secretKey)
-        {
-            // 30-second expiry, 6-digit codes
-            _totp = new Totp(secretKey, step: 30, totpSize: 6);
-        }
-
-        public string GenerateCode()
-        {
-            return _totp.ComputeTotp(); // generate current 6-digit code
-        }
-
-        public bool VerifyCode(string code)
-        {
-            // Allow ±1 step drift to handle small clock skew
-            return _totp.VerifyTotp(code, out _, new VerificationWindow(previous: 1, future: 1));
-        }
-    }
-
 }

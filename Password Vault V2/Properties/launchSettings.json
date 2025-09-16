@@ -2,6 +2,7 @@
   "profiles": {
     "Password Vault V2": {
       "commandName": "Project",
+      "workingDirectory": "C:\\Users\\dieth\\OneDrive\\Desktop\\Password Vault",
       "nativeDebugging": true
     }
   }

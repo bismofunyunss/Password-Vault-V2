@@ -55,7 +55,7 @@ public partial class Vault : UserControl
         if (FipsCrypto.FipsEnabled)
         {
             // FIPS path: AES-HMAC encryption
-            var hmacKey = FipsCrypto.Hkdf.DeriveKey(masterKey, hkdfSalt, "hmac key"u8.ToArray(), 32);
+            var hmacKey = FipsCrypto.FipsHkdf.DeriveKey(masterKey, hkdfSalt, "hmac key"u8.ToArray(), 32);
             encryptedVault = FipsCrypto.SimpleAesHmac.Encrypt(vaultKey, hmacKey, vaultBytes);
         }
         else
@@ -109,7 +109,7 @@ public partial class Vault : UserControl
         if (FipsCrypto.FipsEnabled)
         {
             // FIPS path: derive HMAC key and decrypt with AES-HMAC
-            var hmacKey = FipsCrypto.Hkdf.DeriveKey(masterKey, hkdfSalt, "hmac key"u8.ToArray(), 32);
+            var hmacKey = FipsCrypto.FipsHkdf.DeriveKey(masterKey, hkdfSalt, "hmac key"u8.ToArray(), 32);
             decryptedBytes = FipsCrypto.SimpleAesHmac.Decrypt(vaultKey, hmacKey, ciphertext);
             CryptoUtilities.ClearMemoryNative(hmacKey);
         }

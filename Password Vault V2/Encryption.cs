@@ -274,7 +274,7 @@ public partial class Encryption : UserControl
         else
         {
             // IMPORTANT: derive using the same salt read from the file header
-            fileKey = FipsCrypto.Hkdf.DeriveKey(masterKey, salt, "file key"u8.ToArray(), CryptoConstants.KeySize);
+            fileKey = FipsCrypto.FipsHkdf.DeriveKey(masterKey, salt, "file key"u8.ToArray(), CryptoConstants.KeySize);
         }
 
         try
@@ -355,7 +355,7 @@ public partial class Encryption : UserControl
         else
         {
             // FIPS: derive key from header salt
-            fileKey = FipsCrypto.Hkdf.DeriveKey(masterKey, salt, "file key"u8.ToArray(), CryptoConstants.KeySize);
+            fileKey = FipsCrypto.FipsHkdf.DeriveKey(masterKey, salt, "file key"u8.ToArray(), CryptoConstants.KeySize);
         }
 
         try

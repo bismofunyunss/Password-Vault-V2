@@ -42,6 +42,8 @@ namespace Password_Vault_V2
             PasswordTxt = new TextBox();
             LogoutBtn = new Button();
             RememberMeCheckBox = new CheckBox();
+            verifyTxt = new TextBox();
+            label1 = new Label();
             SidePanelMenu.SuspendLayout();
             TopPanelBar.SuspendLayout();
             ((ISupportInitialize)MinimizeIcon).BeginInit();
@@ -304,7 +306,7 @@ namespace Password_Vault_V2
             BtnLogin.ForeColor = Color.White;
             BtnLogin.Image = Properties.Resources.enter;
             BtnLogin.ImageAlign = ContentAlignment.MiddleLeft;
-            BtnLogin.Location = new Point(80, 166);
+            BtnLogin.Location = new Point(80, 242);
             BtnLogin.Name = "BtnLogin";
             BtnLogin.Size = new Size(525, 42);
             BtnLogin.TabIndex = 3;
@@ -378,6 +380,8 @@ namespace Password_Vault_V2
             // 
             LoginGroupBox.Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right;
             LoginGroupBox.BackColor = Color.FromArgb(30, 30, 30);
+            LoginGroupBox.Controls.Add(verifyTxt);
+            LoginGroupBox.Controls.Add(label1);
             LoginGroupBox.Controls.Add(PasswordTxt);
             LoginGroupBox.Controls.Add(LogoutBtn);
             LoginGroupBox.Controls.Add(WelcomeLabel);
@@ -420,7 +424,7 @@ namespace Password_Vault_V2
             LogoutBtn.ForeColor = Color.White;
             LogoutBtn.Image = (Image)resources.GetObject("LogoutBtn.Image");
             LogoutBtn.ImageAlign = ContentAlignment.MiddleLeft;
-            LogoutBtn.Location = new Point(80, 212);
+            LogoutBtn.Location = new Point(80, 290);
             LogoutBtn.Name = "LogoutBtn";
             LogoutBtn.Size = new Size(525, 42);
             LogoutBtn.TabIndex = 4;
@@ -432,12 +436,31 @@ namespace Password_Vault_V2
             // 
             RememberMeCheckBox.AutoSize = true;
             RememberMeCheckBox.Font = new Font("Century Gothic", 11F);
-            RememberMeCheckBox.Location = new Point(80, 260);
+            RememberMeCheckBox.Location = new Point(80, 338);
             RememberMeCheckBox.Name = "RememberMeCheckBox";
             RememberMeCheckBox.Size = new Size(202, 29);
             RememberMeCheckBox.TabIndex = 6;
             RememberMeCheckBox.Text = "Remember Me";
             RememberMeCheckBox.UseVisualStyleBackColor = true;
+            // 
+            // verifyTxt
+            // 
+            verifyTxt.BackColor = Color.FromArgb(30, 30, 30);
+            verifyTxt.ForeColor = Color.White;
+            verifyTxt.Location = new Point(80, 194);
+            verifyTxt.Name = "verifyTxt";
+            verifyTxt.Size = new Size(525, 34);
+            verifyTxt.TabIndex = 15;
+            // 
+            // label1
+            // 
+            label1.AutoSize = true;
+            label1.Font = new Font("Century Gothic", 11F);
+            label1.Location = new Point(80, 163);
+            label1.Name = "label1";
+            label1.Size = new Size(200, 25);
+            label1.TabIndex = 16;
+            label1.Text = "Verification Code";
             // 
             // PasswordVault
             // 
@@ -504,6 +527,8 @@ namespace Password_Vault_V2
         private Panel SeparatePanel;
         private TextBox PasswordTxt;
         private Button CryptoSettingsBtn;
+        private TextBox verifyTxt;
+        private Label label1;
         //private Panel ContentPanel;
     }
 }

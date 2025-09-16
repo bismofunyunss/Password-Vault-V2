@@ -40,7 +40,6 @@ public static class ErrorLogging
         catch
         {
             // Silent failure; optionally write to Debug output
-            System.Diagnostics.Debug.WriteLine("Error logging failed.");
         }
     }
 
